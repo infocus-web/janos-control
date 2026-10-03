@@ -93,7 +93,9 @@ Video backstage (filmación del book)
 {remitente} elige la música porque por experiencia sabe cuál se ajusta mejor al video, pero si quieren algo puntual, pueden consultarle por acá — está en el grupo.
 
 Fechas y locaciones para el book y el video backstage
-Sugerimos usar las instalaciones de alguno de los salones de Jano's, por seguridad y comodidad al momento de cambiarse: {salonesSesion}. Quedan sujetos a disponibilidad (y a cancelaciones si surge un evento ese día), así que tenemos que coordinar una fecha en la que coincidamos nosotros, ustedes, y que el lugar esté libre.
+Sugerimos usar las instalaciones de alguno de los salones de Jano's, por seguridad y comodidad al momento de cambiarse: {salonesSesion}. Quedan sujetos a disponibilidad, así que tenemos que coordinar una fecha en la que coincidamos nosotros, ustedes, y que el lugar esté libre.
+
+Tengan en cuenta que el salón que elijamos puede cancelarse si surge un evento ese día: estamos en temporada de eventos empresariales y escolares, y durante la semana se hacen muchos eventos corporativos. Si pasa, no se preocupen: hacemos la sesión en otro salón cercano.
 
 Fuera de Jano's hay lugares dedicados para hacer fotos, como Equiland o Lagos del Rocío, que tienen un costo aparte (no incluido en el servicio) y que tendrían que contratar ustedes directamente.
 
@@ -708,7 +710,7 @@ function whatsappMessage(client){const template=whatsappTemplateForType(client.t
 // guardadas en state.settings.speechTemplates. Editables en Configuración,
 // con el mismo patrón de "Restaurar mensaje original" que los de arriba.
 function speechTemplates(){const map=state.settings?.speechTemplates;return (map&&typeof map==="object")?map:{};}
-function speechTemplateFor(key){const def=SPEECH_TYPES.find(s=>s.key===key)?.default||"";return (speechTemplates()[key]||def).replace(/\bDylan elige la música/g,"{remitente} elige la música");}
+function speechTemplateFor(key){const def=SPEECH_TYPES.find(s=>s.key===key)?.default||"";return (speechTemplates()[key]||def).replace(/\bDylan elige la música/g,"{remitente} elige la música").replace("Quedan sujetos a disponibilidad (y a cancelaciones si surge un evento ese día), así que tenemos que coordinar una fecha en la que coincidamos nosotros, ustedes, y que el lugar esté libre.","Quedan sujetos a disponibilidad, así que tenemos que coordinar una fecha en la que coincidamos nosotros, ustedes, y que el lugar esté libre.\n\nTengan en cuenta que el salón que elijamos puede cancelarse si surge un evento ese día: estamos en temporada de eventos empresariales y escolares, y durante la semana se hacen muchos eventos corporativos. Si pasa, no se preocupen: hacemos la sesión en otro salón cercano.");}
 function speechMessage(client,key){return fillTemplate(speechTemplateFor(key),messagePlaceholderValues(client));}
 function saveSpeechTemplates(){const updated={};SPEECH_TYPES.forEach(s=>{const value=document.querySelector(`[data-speech-template="${CSS.escape(s.key)}"]`)?.value.trim()||"";updated[s.key]=value||s.default;});state.settings={...(state.settings||{}),speechTemplates:updated};saveState();renderSettings();toast("Mensajes de grupo guardados");}
 // Copia el speech al portapapeles y abre el grupo de WhatsApp guardado en
