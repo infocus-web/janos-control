@@ -86,7 +86,6 @@
           <input type="text" id="destination" placeholder="Ej. Ruta Panamericana Km 34, Pilar">
         </div>
         <div style="display:flex; gap:8px; flex-wrap:wrap;">
-          <button type="button" class="maps-btn" data-route="shortest" id="calcShortBtn">Ruta corta</button>
           <button type="button" class="maps-btn" data-route="longest" id="calcLongBtn">Ruta larga</button>
           <button type="button" class="maps-btn" data-route="fastest" id="calcFastBtn">Ruta rápida</button>
         </div>
@@ -217,7 +216,6 @@
     });
 
     const routeBtns = [
-      document.getElementById('calcShortBtn'),
       document.getElementById('calcLongBtn'),
       document.getElementById('calcFastBtn'),
     ];
