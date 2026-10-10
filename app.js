@@ -720,11 +720,12 @@ function saveSpeechTemplates(){const updated={};SPEECH_TYPES.forEach(s=>{const v
 // con el texto cargado) — por eso acá se copia y el único paso manual es
 // Ctrl+V y Enter, en el grupo correcto de una.
 //
-// Importante sobre el orden: window.open() tiene que llamarse de forma
-// síncrona, en la misma tanda de eventos que el click, o el navegador lo
-// bloquea como si fuera un popup no solicitado. Por eso NO se usa "await"
-// antes de abrir la pestaña: primero se abre el grupo, y la copia al
-// portapapeles corre en paralelo. Si el portapapeles falla igual (permisos,
+// Importante sobre el orden: el grupo se abre en WhatsApp de escritorio
+// (ver openWhatsappGroupLink), y esa app se lleva el foco. La copia al
+// portapapeles se arranca ANTES de abrir la app, mientras Janos Control
+// todavía tiene el foco (si no, Chrome la rechaza), y sin "await" para que
+// la apertura siga en la misma tanda de eventos que el click (si no, Chrome
+// bloquea abrir la app). Si el portapapeles falla igual (permisos,
 // navegador viejo, etc.), se muestra el texto en un cuadro para copiarlo a
 // mano en vez de fallar en silencio.
 function sendSpeech(clientId,key){
@@ -733,12 +734,13 @@ function sendSpeech(clientId,key){
   const groupUrl=(client.whatsappGroupUrl||"").trim();
   if(!groupUrl){ openClientForm(client); toast("Pegá primero el link del grupo de WhatsApp en la ficha para poder enviar speeches."); return; }
   const message=speechMessage(client,key);
-  window.open(groupUrl,"janosExternal","noopener,noreferrer");
   if(navigator.clipboard?.writeText){
     navigator.clipboard.writeText(message)
       .then(()=>toast("Mensaje copiado · pegalo (Ctrl+V) en el grupo que se abrió"))
       .catch(()=>{ console.error("No se pudo copiar al portapapeles"); prompt("No se pudo copiar automático. Copiá este texto (Ctrl+C) y pegalo en el grupo:", message); });
+    openWhatsappGroupLink(groupUrl);
   } else {
+    openWhatsappGroupLink(groupUrl);
     prompt("Tu navegador no permite copiar automático. Copiá este texto (Ctrl+C) y pegalo en el grupo:", message);
   }
   client.history=client.history||[];
@@ -777,10 +779,25 @@ function saveWhatsappSenders(){
   renderSettings();
   toast("Mensajes de WhatsApp guardados");
 }
-function whatsappUrl(client){const phone=whatsappNumber(client.clientPhone);return phone?`https://wa.me/${phone}?text=${encodeURIComponent(whatsappMessage(client))}`:"";}
-function contactClient(id){const client=state.clients.find(item=>item.id===id);if(!client)return;const url=whatsappUrl(client);if(!url){openClientForm(client);toast("Agregá el WhatsApp del cliente para contactarlo");return;}window.open(url,"janosExternal","noopener,noreferrer");client.contactedAt=new Date().toISOString();client.history=client.history||[];client.history.push({date:client.contactedAt,text:"Contacto inicial por WhatsApp registrado",type:"whatsapp_contact"});saveState();refreshTaskViews(id);toast("Contacto registrado");}
+// WhatsApp de escritorio: en vez de abrir wa.me / chat.whatsapp.com en una
+// pestaña de Chrome (que muestra la página intermedia "Abrir aplicación /
+// Continuar en WhatsApp Web"), se abre directo la app de WhatsApp instalada
+// en la PC con su protocolo whatsapp://, en el mismo formato que usa la
+// propia página de WhatsApp: whatsapp://send/?phone=&text= para el chat 1 a 1
+// y whatsapp://chat/?code= para un grupo. La primera vez Chrome pregunta
+// "¿Abrir WhatsApp?": tildando "Permitir siempre" no vuelve a preguntar.
+function whatsappUrl(client){const phone=whatsappNumber(client.clientPhone);return phone?`whatsapp://send/?phone=${phone}&text=${encodeURIComponent(whatsappMessage(client))}`:"";}
+function whatsappGroupAppUrl(url){const m=String(url||"").match(/chat\.whatsapp\.com\/(?:invite\/)?([A-Za-z0-9_-]+)/i);return m?`whatsapp://chat/?code=${m[1]}`:"";}
+// Abre un link whatsapp:// sin dejar una pestaña en blanco: el navegador se
+// lo pasa a la app de escritorio y Janos Control queda como estaba.
+function openWhatsappApp(url){const a=document.createElement("a");a.href=url;a.style.display="none";document.body.appendChild(a);a.click();a.remove();}
+// Link de grupo guardado en la ficha: si es un link de invitación
+// (chat.whatsapp.com/...) se abre en la app; cualquier otro link se abre
+// en una pestaña como antes.
+function openWhatsappGroupLink(url){const appUrl=whatsappGroupAppUrl(url);if(appUrl)openWhatsappApp(appUrl);else window.open(url,"janosExternal","noopener,noreferrer");}
+function contactClient(id){const client=state.clients.find(item=>item.id===id);if(!client)return;const url=whatsappUrl(client);if(!url){openClientForm(client);toast("Agregá el WhatsApp del cliente para contactarlo");return;}openWhatsappApp(url);client.contactedAt=new Date().toISOString();client.history=client.history||[];client.history.push({date:client.contactedAt,text:"Contacto inicial por WhatsApp registrado",type:"whatsapp_contact"});saveState();refreshTaskViews(id);toast("Contacto registrado");}
 function resetClientContact(id){const client=state.clients.find(item=>item.id===id);if(!client)return;client.contactedAt="";client.history=client.history||[];client.history.push({date:new Date().toISOString(),text:"Se deshizo la marca de contacto inicial",type:"whatsapp_contact_reset"});saveState();refreshTaskViews(id);document.getElementById("resetContactBtn").classList.add("hidden");toast("Contacto deshecho");}
-function openWhatsappGroup(id){const client=state.clients.find(item=>item.id===id);if(!client)return;const url=(client.whatsappGroupUrl||"").trim();if(!url){openClientForm(client);toast("Pegá el link del grupo de WhatsApp para poder abrirlo");return;}window.open(url,"janosExternal","noopener,noreferrer");}
+function openWhatsappGroup(id){const client=state.clients.find(item=>item.id===id);if(!client)return;const url=(client.whatsappGroupUrl||"").trim();if(!url){openClientForm(client);toast("Pegá el link del grupo de WhatsApp para poder abrirlo");return;}openWhatsappGroupLink(url);}
 async function openDriveFolder(id){
   const client=state.clients.find(item=>item.id===id);if(!client)return;
   const url=(client.driveUrl||"").trim();
