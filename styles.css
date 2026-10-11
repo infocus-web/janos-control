@@ -650,3 +650,23 @@ legend { padding: 0 6px; }
 @media (max-width: 640px) {
   .session-picker { grid-template-columns: 1fr; }
 }
+
+/* ── CELULAR: ficha del cliente (10/10/2026) ──
+   1) Botones de abajo de la ficha: eran 7 en una sola fila sin salto de línea y
+      alineados a la derecha, así que en el celular los que no entraban quedaban
+      afuera por la izquierda (ahí estaba escondido "Contactar") y no se podía
+      llegar a ellos. Ahora van de a dos por fila, con altura cómoda para el dedo,
+      y "Eliminar" queda último.
+   2) Casilla de cada tarea: la regla general ".task-row input {width:100%}" le
+      ganaba a ".task-check" y la casilla quedaba sola y centrada. Ahora va a la
+      izquierda del título y el resto de los campos abajo, a lo ancho. */
+@media (max-width: 760px) {
+  .modal-actions { flex-wrap: wrap; justify-content: stretch; }
+  .modal-actions > button { flex: 1 1 calc(50% - 5px); min-width: 0; min-height: 44px; margin: 0; padding: 8px 10px; white-space: normal; }
+  .modal-actions > .danger-btn:first-child { margin-right: 0; order: 99; }
+
+  .task-row { display: grid; grid-template-columns: 26px minmax(0, 1fr); column-gap: 10px; row-gap: 8px; align-items: start; }
+  .task-row > :not(.task-check):not(.task-title) { grid-column: 1 / -1; }
+  .task-row > .task-check { grid-column: 1; width: 22px; height: 22px; padding: 0; margin: 0; border: 0; background: none; }
+  .task-row > .task-title { grid-column: 2; }
+}
