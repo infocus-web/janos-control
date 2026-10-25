@@ -1763,8 +1763,30 @@ for /f "usebackq tokens=* delims=" %%N in ("!TMPFILE!") do (
       )
     )
 
+    rem Si no aparecio con el prefijo exacto, se busca solo por numero,
+    rem con cualquier prefijo adelante. Pasa cuando el nombre real del
+    rem archivo tiene tildes o enies -por ej. LUCIA con tilde en la I-,
+    rem que la app saca del prefijo y que el .bat no puede escribir bien.
     if "!FOUND!"=="0" (
-      echo   [!!] NO ENCONTRADA: %PREFIJO%-!RAW!.jpg / %PREFIJO% !LP!!RAW!!RP!.jpg
+      for %%F in ("%ORIGEN%\\*-!RAW!.jpg" "%ORIGEN%\\* !LP!!RAW!!RP!.jpg") do (
+        copy "%%~fF" "%DESTINO%\\%%~nxF" >nul
+        echo   [OK] %%~nxF
+        set /a COUNT+=1
+        set "FOUND=1"
+      )
+    )
+
+    if "!FOUND!"=="0" (
+      for %%F in ("%ORIGEN%\\*-!INTNUM!.jpg" "%ORIGEN%\\* !LP!!INTNUM!!RP!.jpg") do (
+        copy "%%~fF" "%DESTINO%\\%%~nxF" >nul
+        echo   [OK] %%~nxF
+        set /a COUNT+=1
+        set "FOUND=1"
+      )
+    )
+
+    if "!FOUND!"=="0" (
+      echo   [X] NO ENCONTRADA: foto numero !RAW!
       set /a MISSING+=1
     )
   )
