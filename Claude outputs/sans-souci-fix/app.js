@@ -1,0 +1,2345 @@
+import { approveMassDeletion, checkDriveFolderExists, clearDriveAccount, clearMyZohoAccount, cloudEnabled, supabase, supabaseUrl, connectDriveAccount, createDriveFolderNow, deleteUser, getAccessProfile, getLatestUpdateAt, getMyDriveAccounts, getSession, listUserProfiles, loadCloudState, notifyAdmin, notifyUserApproved, requestEmailCode, requestPasswordReset, saveDriveRootFolder, saveMyZohoAccount, sendDriveEmailNow, setUserStatus, signIn, signOut, signUp, syncCloudState, updatePassword, verifyEmailCode, verifyMyZohoAccount } from "./cloud.js";
+
+const PRODUCTION_HOST = "janos-control.vercel.app";
+if(window.location.hostname.endsWith(".vercel.app")&&window.location.hostname!==PRODUCTION_HOST){
+  window.location.replace(`https://${PRODUCTION_HOST}${window.location.pathname}${window.location.search}${window.location.hash}`);
+}
+
+const STORAGE_KEY = "janos-control-v1";
+const MANAGED_SALONS = ["Acceso Oeste","Acceso Oeste 2","Adrogue","Ambulante","Avellaneda 1","Avellaneda 2","Avellaneda 3","Avellaneda 4","Bayres Eventos","Bella Vista","Bella Vista 2","Benavidez 1","Benavidez 2","Berazategui","Berazategui 2","Berisso","CABA Boutique","Caballito 1","Caballito 2","Campana","Canning","Champagnat Boutique","Costanera 1","Costanera 2","Dardo Rocha","Darwin 1","Darwin 2","Del Viso","DOT","Escobar","General Rodriguez","Haedo","Haedo 2","Hipodromo La Plata","Holiday Inn","Holiday Inn 2","Hotel","House","Hudson","Hudson 2","Hurlingham","Ituzaingo","Ituzaingo 2","Jose C Paz","La Plata","La Plata 2","La Plata Boutique","Liniers","Lomas","Lomas Boutique","Martinez","Maschwitz","Merlo","Merlo 2","Moreno","Moron","Nuñez","Olivos","Olivos 2","Palacio Sans Souci","Palermo Hollywood","Palermo Soho","Pilar","Pilar boutique","Pilar Hotel","Puerto Madero","Puerto Madero Boutique","Quilmes Boutique","Quinta","Ramos Boutique","Ramos Boutique 2","Ramos Mejia","Ramos Mejia 2","Recoleta","San Isidro","San Justo","San Justo 2","San Martin 1","San Martin 2","San Martin 3","San Telmo","San Telmo 2","San Telmo Boutique","Temperley","Vicente Lopez","Villa de Mayo","Villa de Mayo Boutique"];
+const STATUS_LABELS = { pending: "Pendiente", waiting: "Esperando cliente", progress: "En proceso", done: "Terminado", na: "No corresponde" };
+const RENDITION_STATUS = { pending: "Pendiente", submitted: "Rendido", paid: "Pagado" };
+const DEFAULT_WHATSAPP_TEMPLATE = `Hola {nombre}, ¡buenos días!
+
+Mi nombre es {remitente}, del Departamento de Fotografía de Janos. ¡Es un gusto poder comenzar a trabajar juntos!
+
+Te escribo para presentarme y contarte que nuestro equipo realizará la cobertura de fotografía y video del evento de {homenajeado}, programado para el {fecha} en {salon}.
+
+He creado un grupo de WhatsApp para que podamos estar en contacto permanente y evacuar cualquier duda relacionada con fotografía y video.
+
+En breve te enviaré el enlace de acceso. Podés compartirlo con quienes corresponda: mamá, papá, agasajado/a u otra persona responsable.
+
+Una vez que todos hayan ingresado al grupo, enviame un mensaje por allí para que pueda compartirles información importante.
+
+¡Estamos a su entera disposición! ¡Muchas gracias!`;
+
+const WEDDING_WHATSAPP_TEMPLATE = `Hola {nombre}, ¡buenos días!
+
+Mi nombre es {remitente}, del Departamento de Fotografía de Janos. ¡Es un gusto poder comenzar a trabajar juntos!
+
+Te escribo para presentarme y contarte que nuestro equipo realizará la cobertura de fotografía y video de su boda, programado para el {fecha} en {salon}.
+
+He creado un grupo de WhatsApp para que podamos estar en contacto permanente y evacuar cualquier duda relacionada con fotografía y video.
+
+En breve te enviaré el enlace de acceso. Compartile ese enlace a tu prometido/a.
+
+Una vez ambos hayan ingresado al grupo, enviame un mensaje por allí para que pueda compartirles información importante.
+
+¡Estamos a su entera disposición! ¡Muchas gracias!`;
+
+// El texto del mensaje inicial ahora se elige según el "Tipo de evento" del
+// cliente (select "type" en el form de cliente: 15/Boda/Cumpleaños/
+// Corporativo/Egresados/Otro), no según quién lo manda. "general" cubre los
+// tipos que no tienen mensaje propio (Corporativo, Egresados, Otro). Cada
+// entrada tiene su propio "default": el texto al que vuelve ese tipo si se
+// aprieta "Restaurar mensaje original" en su bloque.
+const WHATSAPP_TYPE_TEMPLATES = [
+  { key: "Boda", label: "Bodas", default: WEDDING_WHATSAPP_TEMPLATE },
+  { key: "15", label: "15 años", default: DEFAULT_WHATSAPP_TEMPLATE },
+  { key: "Cumpleaños", label: "Cumpleaños", default: DEFAULT_WHATSAPP_TEMPLATE },
+  { key: "general", label: "Otros eventos (Corporativo, Egresados, Otro)", default: DEFAULT_WHATSAPP_TEMPLATE },
+];
+
+// Speeches para el grupo de WhatsApp del cliente: a diferencia del mensaje
+// de presentación privado (arriba), estos no varían por tipo de evento — son
+// pasos fijos del flujo de trabajo. WhatsApp no permite prellenar texto en
+// el link de invitación a un grupo ya existente (wa.me con texto solo
+// funciona para chats 1 a 1), así que estos mensajes se copian al
+// portapapeles y se abre el grupo para pegarlos (ver sendSpeech()).
+const GROUP_PRESENTATION_TEMPLATE = `Hola chicos, ¿cómo están?
+
+Soy {remitente}, ¡es un gusto por fin poder comenzar a trabajar con ustedes! Tendré el honor de ser parte del equipo que realice la cobertura fotográfica y de video de su evento.
+
+A través de este grupo estaremos en contacto permanente para que puedan evacuar cualquier duda respecto a lo que tenga que ver con fotografía y video. A continuación les voy a compartir información importante para que la lean con calma, y después charlamos cualquier duda y arrancamos a trabajar juntos.
+
+¡Estamos a su entera disposición! ¡Gracias!`;
+
+const GROUP_PRESENTATION_SILVER_TEMPLATE = `Hola chicos, ¿cómo están?
+
+Soy {remitente}, ¡es un gusto por fin poder comenzar a trabajar con ustedes! Tendré el honor de ser parte del equipo que realice la cobertura fotográfica y de video de su fiesta.
+
+Les cuento un poco cómo trabajamos: el servicio que contrataron incluye la cobertura fotográfica y de video del día del evento (no incluye sesión de fotos previa/book).
+
+Si les interesa sumar algo más, tenemos el Mini Flex: pueden elegir hasta 2 servicios adicionales para completar su experiencia, por ejemplo una sesión de fotos (book) antes de la fiesta, un segundo fotógrafo o videógrafo para el evento, drone, libro de fiesta, video cronológico, video con amigos, entre otras opciones. Si les interesa, me avisan por acá y les paso el detalle y los valores.
+
+A través de este grupo estaremos en contacto permanente para que puedan evacuar cualquier duda respecto a lo que tenga que ver con fotografía y video para el día de la fiesta.
+
+¡Estamos a su entera disposición! ¡Gracias!`;
+
+const SESSION_COORDINATION_TEMPLATE = `Para comenzar: debemos coordinar una fecha y lugar para la realización del book de fotos, ese sería el primer paso.
+
+El servicio que contrataron incluye varios pasos previos a la fiesta. Acá les cuento el detalle de cada uno para que vayamos coordinando.
+
+Book de fotos
+Vestuario: pueden ser 2 o 3 cambios de ropa. Recomendamos 2 cambios informales y 1 formal.
+Accesorios: pueden llevar cualquier accesorio que quieran para complementar los cambios. Se suelen usar bengalas de humo de colores (4 como mínimo, para usar en los distintos cambios — no se olviden del encendedor).
+Maquillaje: si necesitan, les puedo recomendar a alguien que trabaja muy bien.
+
+Video cronológico
+Ideal 60 fotos como máximo, enumeradas de 001 a 060, con una canción de al menos 3 minutos y medio, o dos canciones. Van a tener que elegir la musicalización.
+Suban las fotos a una carpeta de Drive y pásennos el link con acceso de "lector" para que podamos entrar y descargarlas.
+
+Video backstage (filmación del book)
+Generalmente nosotros elegimos la música porque por experiencia sabemos cuál se ajusta mejor al video, pero si quieren algo puntual, pueden consultarnos.
+
+Fechas y locaciones para el book y el video backstage
+Sugerimos usar las instalaciones de alguno de los salones de Jano's, por seguridad y comodidad al momento de cambiarse: {salonesSesion}. Quedan sujetos a disponibilidad, así que tenemos que coordinar una fecha en la que coincidamos nosotros, ustedes, y que el lugar esté libre.
+
+Tengan en cuenta que el salón que elijamos puede cancelarse si surge un evento ese día: estamos en temporada de eventos empresariales y escolares, y durante la semana se hacen muchos eventos corporativos. Si pasa, no se preocupen: hacemos la sesión en otro salón cercano.
+
+Fuera de Jano's hay lugares dedicados para hacer fotos, como Equiland o Lagos del Rocío, que tienen un costo aparte (no incluido en el servicio) y que tendrían que contratar ustedes directamente.
+
+El lugar de la sesión debe estar dentro de un rango de 40 kilómetros del salón donde va a ser la fiesta ({salon}). Si eligen un lugar más alejado, va a tener un costo extra de logística (combustible).
+
+Cuéntenme qué días tienen disponibles de lunes a jueves así coordinamos fecha y reservamos el lugar. Cualquier duda, me escriben por acá. ¡Un abrazo!`;
+
+const SESSION_CONFIRMED_TEMPLATE = `¡Listo chicos! Agendado y reservado para el {diaFechaSesion} a las {horaSesion} en Janos {salonSesion}!
+
+📍 Ubicación: {mapaSesion}`;
+
+// Cada speech define "condition(c)": el botón solo aparece si se cumple
+// (así cada uno filtra por lo que corresponda: siempre, si tiene sesión
+// habilitada, o si ya está agendada). Se evalúa contra el cliente al
+// armar el panel de la ficha (ver speechPanelHtml).
+const SPEECH_TYPES = [
+  { key: "groupPresentation", label: "Presentación en el grupo (Gold/VIP – con sesión de fotos)", default: GROUP_PRESENTATION_TEMPLATE, condition: c => canScheduleSession(c) },
+  { key: "groupPresentationSilver", label: "Presentación en el grupo (Silver – sin sesión de fotos)", default: GROUP_PRESENTATION_SILVER_TEMPLATE, condition: c => !canScheduleSession(c) },
+  { key: "sessionCoordination", label: "Coordinación del book", default: SESSION_COORDINATION_TEMPLATE, condition: c => canScheduleSession(c) },
+  { key: "sessionConfirmed", label: "Sesión agendada (confirmación)", default: SESSION_CONFIRMED_TEMPLATE, condition: c => Boolean(c.photoSession?.date) },
+];
+
+const ADDONS = [
+  ["pant", "Pantalla"], ["miniflex", "Mini Flex"], ["flex", "Flex"],
+  ["sansSouci", "Sans Souci"], ["libro", "Libro Combo"], ["maqui", "Maquillaje"], ["maquiplus", "Maquillaje Plus"], ["maquix2plus", "Maquillaje x2 Plus"], ["moda", "Producción de Moda"],
+  ["drone", "Drone"], ["vipExtras", "Extras VIP"], ["glamCam", "Glam Cam"], ["alfombraRoja", "Alfombra Roja"],
+  ["invitacion", "Invitación Interactiva"], ["fotoIman", "Foto Imán"], ["vipUpgrade", "Upgrade VIP"], ["cere", "Ceremonia"]
+];
+
+const FLEX_SERVICES = [
+  ["church", "Iglesia o templo"], ["civilPhoto", "Civil (fotógrafo)"], ["civilVideo", "Civil (videógrafo)"], ["droneEvent", "Drone en recepción"],
+  ["droneBook", "Drone en sesión"], ["photoExtra", "Fotógrafo extra"], ["videoExtra", "Videógrafo extra"],
+  ["signatureBook", "Libro de firmas"], ["partyBook", "Libro de fiesta"], ["liveEditor", "Editor en vivo"],
+  ["friendsVideo", "Video con amigos"], ["extraSession", "Sesión extra"], ["chronoVideo", "Video cronológico"]
+];
+
+// Salones habilitados para sesión de fotos previa al evento (coinciden con los
+// que ofrece la web de auto-reserva de clientes, reserva-clientes-janos, para que
+// el picker interno se vea y se use igual que el que usa el cliente).
+const SESSION_SALONS = ["Pilar Hotel","Del Viso","Acceso Oeste","Hurlingham","Maschwitz","Benavidez 1","Benavidez 2","Villa de Mayo","Ituzaingó 2","Sans Souci"];
+const SESSION_SLOTS = ["13:00","15:00","17:00"];
+// Feriados nacionales que caen Lunes a Jueves (únicos días habilitados para sesión).
+// Fuente: argentina.gob.ar/jefatura/feriados-nacionales-<año>. Revisar y sumar los
+// del año siguiente cuando se acerque diciembre.
+const SESSION_HOLIDAYS = new Set([
+  "2025-01-01","2025-03-03","2025-03-04","2025-03-24","2025-04-02","2025-04-18","2025-05-01","2025-05-25",
+  "2026-01-01","2026-02-16","2026-02-17","2026-03-23","2026-03-24","2026-04-02","2026-05-25","2026-06-15",
+  "2026-07-09","2026-08-17","2026-10-12","2026-11-23","2026-12-07","2026-12-08"
+]);
+// Normaliza códigos viejos guardados antes de separar "Civil" en fotógrafo/videógrafo
+function normalizeFlexServices(list) {
+  return [...new Set((list || []).map(code => code === "civil" ? "civilPhoto" : code))];
+}
+// "Civil (fotógrafo)" y "Civil (videógrafo)" son un mismo producto contratado por el cliente;
+// se pueden tildar por separado para que cada rol rinda su parte, pero cuentan como 1 solo cupo.
+function flexServiceSlot(code) { return (code === "civilPhoto" || code === "civilVideo") ? "civil" : code; }
+function countFlexSlots(codes) { return new Set((codes || []).map(flexServiceSlot)).size; }
+
+const BASE_RATES = {
+  gold: 325000, silver: 227500, book: 97500, eventCoverage: 160000, eventEdit: 67500,
+  bookCoverage: 68000, bookEdit: 29500, informal: 160000, informalRecording: 110000,
+  ceremony: 25000, ceremonyRecording: 14000, ceremonyEdit: 11000, drone: 37000,
+  photoExtra: 160000, videoExtra: 160000, liveEditor: 160000, signatureDesign: 30000,
+  partyBookDesign: 40000, videoExtraClip: 25000, albumInteractive: 16000, droneEdit: 20000,
+  assistant: 18000, extraSheet: 6000, churchUpgrade: 60000, totemDigital: 10000,
+  bookModa: 30000, extraCameraEdit: 22000
+};
+
+const SEASONAL_RATE_KEYS = ["gold","silver","book","eventCoverage","eventEdit","bookCoverage","bookEdit","informal","informalRecording"];
+const SEASONAL_RATES = {
+  2026: {
+    5:  { gold: 273000, silver: 191000, book: 82000, eventCoverage: 132600, eventEdit: 59200, bookCoverage: 57200, bookEdit: 25200, informal: 135600, informalRecording: 93400 },
+    6:  { gold: 300000, silver: 210000, book: 90000, eventCoverage: 146000, eventEdit: 64000, bookCoverage: 62000, bookEdit: 28000, informal: 150000, informalRecording: 102000 },
+    7:  { gold: 300000, silver: 210000, book: 90000, eventCoverage: 146000, eventEdit: 64000, bookCoverage: 62000, bookEdit: 28000, informal: 150000, informalRecording: 102000 },
+    8:  { gold: 325000, silver: 227500, book: 97500, eventCoverage: 160000, eventEdit: 67500, bookCoverage: 68000, bookEdit: 29500, informal: 160000, informalRecording: 110000 },
+    9:  { gold: 325000, silver: 227500, book: 97500, eventCoverage: 160000, eventEdit: 67500, bookCoverage: 68000, bookEdit: 29500, informal: 160000, informalRecording: 110000 }
+  }
+};
+
+function getRate(rateKey, eventDateStr) {
+  if (!SEASONAL_RATE_KEYS.includes(rateKey) || !eventDateStr) return state.rates[rateKey] || 0;
+  const d = new Date(eventDateStr + "T00:00:00");
+  if (isNaN(d.getTime())) return state.rates[rateKey] || 0;
+  const year = d.getFullYear(), month = d.getMonth() + 1;
+  const yearTable = SEASONAL_RATES[year];
+  if (yearTable) {
+    for (let m = month; m >= 1; m--) {
+      if (yearTable[m] && yearTable[m][rateKey] != null) return yearTable[m][rateKey];
+    }
+  }
+  const prevYearTable = SEASONAL_RATES[year - 1];
+  if (prevYearTable) {
+    for (let m = 12; m >= 1; m--) {
+      if (prevYearTable[m] && prevYearTable[m][rateKey] != null) return prevYearTable[m][rateKey];
+    }
+  }
+  return state.rates[rateKey] || 0;
+}
+
+// Direccion fija para calcular el viatico a Palacio Sans Souci (no es un
+// salon propio de Jano's). Misma logica de tramos que usa la calculadora
+// publica (public/viaticos.html): franquicia sin cargo, despues dos tramos
+// con tarifa por km. Se recalcula por cliente porque el origen (el salon
+// donde el cliente hace la fiesta) cambia la distancia.
+const SANS_SOUCI_VIATICO_ADDRESS = "Palacio Sans Souci, Victoria, Buenos Aires, Argentina";
+const VIATICO_TRAMOS = { franquiciaKm: 40, limiteTramo2Km: 90, tarifaTramo2: 2000, tarifaTramo3: 1000 };
+function viaticoTramosAmount(kmIdaYVuelta) {
+  const { franquiciaKm, limiteTramo2Km, tarifaTramo2, tarifaTramo3 } = VIATICO_TRAMOS;
+  const km2 = Math.max(0, Math.min(kmIdaYVuelta, limiteTramo2Km) - franquiciaKm);
+  const km3 = Math.max(0, kmIdaYVuelta - limiteTramo2Km);
+  return Math.round(km2 * tarifaTramo2 + km3 * tarifaTramo3);
+}
+async function calculateSansSouciViatico(clientId, taskId, triggerBtn) {
+  const c = state.clients.find(x => x.id === clientId);
+  const t = c?.tasks.find(x => x.id === taskId);
+  if (!c || !t) return;
+  if (!c.salon) { toast("Este cliente no tiene salon cargado."); return; }
+  const originalLabel = triggerBtn?.textContent;
+  if (triggerBtn) { triggerBtn.disabled = true; triggerBtn.textContent = "Calculando…"; }
+  try {
+    const res = await fetch("/api/distance", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ origin: `Jano's ${c.salon}, Argentina`, destination: SANS_SOUCI_VIATICO_ADDRESS, routeType: "fastest" }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "No se pudo calcular la distancia.");
+    const kmIdaYVuelta = Math.round(data.km * 2 * 10) / 10;
+    const amount = viaticoTramosAmount(kmIdaYVuelta);
+    t.notes = `Viatico Sans Souci: ${data.km} km ida (ruta rapida) · ${kmIdaYVuelta} km ida y vuelta · ${money(amount)}`;
+    if (!t.completedAt) t.completedAt = todayIso();
+    t.status = "done";
+    const existing = state.renditions.find(r => r.taskId === t.id);
+    if (existing) {
+      existing.amount = amount;
+      existing.observations = t.notes;
+    } else {
+      const workDate = isoDate(t.completedAt) || todayIso();
+      state.renditions.push({ id: uid(), clientId: c.id, taskId: t.id, category: t.category, work: t.work, amount, status: "pending", createdAt: new Date().toISOString(), workDate, periodEnd: periodEndFor(workDate), observations: t.notes });
+    }
+    saveState();
+    refreshTaskViews(c.id);
+    toast(`Viatico calculado: ${kmIdaYVuelta} km ida y vuelta -> ${money(amount)}`);
+  } catch (err) {
+    console.error(err);
+    toast(err.message || "No se pudo calcular el viatico.");
+  } finally {
+    if (triggerBtn) { triggerBtn.disabled = false; triggerBtn.textContent = originalLabel; }
+  }
+}
+
+const CORE_TASKS = [
+  task("contact", "Contactar al cliente y explicar el servicio", "Preparación"),
+  task("verify", "Verificar pack, upgrades y elecciones", "Preparación"),
+  task("coveragePhoto", "Realizar cobertura fotográfica del evento", "Evento", true, "PERSONAL FOTOGRAFIA", "Fiesta (cobertura)", "eventCoverage"),
+  task("coveragePhotoEdit", "Editar fotos del evento", "Evento", true, "PERSONAL FOTOGRAFIA", "Fiesta (edicion foto)", "eventEdit"),
+  task("coverageVideoCapture", "Realizar cobertura de video del evento", "Evento", true, "PERSONAL VIDEO", "Fiesta (cobertura video)", "eventCoverage"),
+  task("coverageVideoEdit", "Editar video del evento", "Evento", true, "PERSONAL VIDEO", "Fiesta (edicion video)", "eventEdit"),
+  task("videoHighlight", "Editar video resumen del evento", "Evento"),
+  task("backup", "Completar backup del salón", "Evento"),
+  task("sendPhotos", "Enviar link de fotografías por e-mail", "Entrega"),
+  task("sendVideo", "Enviar link de videos por e-mail", "Entrega")
+];
+
+const GOLD_TASKS = [
+  task("coordinateSession", "Coordinar y reservar sesión de fotos", "Pre-evento"),
+  task("bookCoveragePhoto", "Realizar sesión de fotos y editar fotos de la sesión", "Pre-evento", true, "PERSONAL FOTOGRAFIA", "Sesion de fotos (cobertura + edicion)", "book"),
+  task("bookCoverageVideo", "Realizar sesión de video y editar video backstage", "Pre-evento", true, "PERSONAL VIDEO", "Sesion de fotos (grabacion + edicion back)", "book"),
+  task("goldChronoVideo", "Editar video cronológico del evento", "Pre-evento", true, "COMPLEMENTOS", "Video cronologico", "videoExtraClip")
+];
+
+const VIP_TASKS = [
+  task("vipDrone", "Realizar drone en exteriores", "Servicios VIP", true, "COMPLEMENTOS", "Drone en evento", "drone"),
+  task("vipLive", "Realizar edición en vivo", "Servicios VIP", true, "COMPLEMENTOS", "Edicion en vivo video", "liveEditor"),
+  task("vipPhotoExtra", "Cubrir como fotógrafo adicional, si fue el elegido", "Servicios VIP", true, "COMPLEMENTOS", "Fiesta (segundo fotografo)", "photoExtra"),
+  task("vipVideoExtra", "Cubrir como videógrafo adicional, si fue el elegido", "Servicios VIP", true, "COMPLEMENTOS", "Fiesta (segundo videógrafo)", "videoExtra")
+];
+
+const FLEX_TASKS = {
+  church: task("flexChurch", "Cubrir iglesia o templo", "Servicios elegidos", true, "PERSONAL FOTOGRAFIA", "Iglesia (servicio extra por upgrade)", "churchUpgrade"),
+  civilPhoto: task("flexCivilPhoto", "Cubrir ceremonia civil - fotografía", "Servicios elegidos", true, "PERSONAL FOTOGRAFIA", "Civil", "book"),
+  civilVideo: task("flexCivilVideo", "Cubrir ceremonia civil - video", "Servicios elegidos", true, "PERSONAL VIDEO", "Civil (valor book)", "book"),
+  droneEvent: task("flexDroneEvent", "Realizar drone en recepción", "Servicios elegidos", true, "COMPLEMENTOS", "Drone en evento", "drone"),
+  droneBook: task("flexDroneBook", "Realizar drone en sesión", "Servicios elegidos", true, "COMPLEMENTOS", "Drone en sesión de fotos", "drone"),
+  photoExtra: task("flexPhotoExtra", "Cubrir evento como fotógrafo extra", "Servicios elegidos", true, "COMPLEMENTOS", "Fiesta (segundo fotografo)", "photoExtra"),
+  videoExtra: task("flexVideoExtra", "Cubrir evento como videógrafo extra", "Servicios elegidos", true, "COMPLEMENTOS", "Fiesta (segundo videógrafo)", "videoExtra"),
+  signatureBook: task("flexSignature", "Diseñar libro de firmas y mural", "Servicios elegidos", true, "COMPLEMENTOS", "Libro firmas (Fotografia Digital)", "signatureDesign"),
+  partyBook: task("flexPartyBook", "Diseñar libro de fotos de la fiesta", "Servicios elegidos", true, "COMPLEMENTOS", "Libro Fiesta (Fotografia Digital)", "partyBookDesign"),
+  liveEditor: task("flexLive", "Realizar edición en vivo", "Servicios elegidos", true, "COMPLEMENTOS", "Edicion en vivo video", "liveEditor"),
+  friendsVideo: task("flexFriends", "Realizar video con amigos", "Servicios elegidos", true, "COMPLEMENTOS", "Video con amigos", "book"),
+  extraSession: task("flexSessionPhoto", "Realizar sesión extra - fotografía", "Servicios elegidos", true, "PERSONAL FOTOGRAFIA", "Sesion de fotos (cobertura + edicion)", "book"),
+  extraSessionVideo: task("flexSessionVideo", "Realizar sesión extra - video", "Servicios elegidos", true, "PERSONAL VIDEO", "Sesion de fotos (cobertura)", "bookCoverage"),
+  chronoVideo: task("flexChronoVideo", "Editar video cronológico del evento", "Servicios elegidos", true, "COMPLEMENTOS", "Video cronologico", "videoExtraClip")
+};
+
+
+function task(key, title, phase, payable = false, category = "", work = "", rateKey = "") {
+  return { key, title, phase, payable, category, work, rateKey };
+}
+
+// Tareas que son exclusivas de un rol; lo que no figura acá se considera "ambos" (general/coordinación).
+const TASK_ROLES = {
+  coveragePhoto: "foto", coveragePhotoEdit: "foto", coverageVideoCapture: "video", coverageVideoEdit: "video", videoHighlight: "video",
+  sendPhotos: "foto", sendVideo: "video",
+  bookCoveragePhoto: "foto", bookCoverageVideo: "video", goldChronoVideo: "video",
+  vipLive: "video", vipPhotoExtra: "foto", vipVideoExtra: "video",
+  flexChurch: "foto", flexCivilPhoto: "foto", flexCivilVideo: "video", flexPhotoExtra: "foto", flexVideoExtra: "video",
+  flexSignature: "foto", flexPartyBook: "foto", flexLive: "video", flexFriends: "video",
+  flexSessionPhoto: "foto", flexSessionVideo: "video", flexChronoVideo: "video",
+  screenVideo: "video", bookModa: "foto",
+  signatureBook: "foto", partyBookSelection: "foto", partyBook: "foto", totemDigital: "foto",
+  informal: "foto",
+  sansSouciCoverage: "foto", sansSouciVideoCoverage: "video", sansSouciDrone: "video"
+};
+function taskRole(key) { return TASK_ROLES[key] || "ambos"; }
+
+function initialState() {
+  return { clients: [], renditions: [], rates: { ...BASE_RATES }, settings: { currency: "ARS" }, seeded: false };
+}
+
+let storageKey = STORAGE_KEY;
+let state = loadState(storageKey);
+let activeView = "dashboard";
+let clientViewMode = "upcoming";
+let clientFilters = { search: "", salon: "", month: "", pack: "", addon: "" };
+let taskRoleFilter = localStorage.getItem("janosTaskRole") || "todos";
+let taskSalonFilter = localStorage.getItem("janosTaskSalon") || "";
+let taskSearchFilter = "";
+let calendarMonth = todayIso().slice(0, 7);
+let calendarSalonFilter = localStorage.getItem("janosCalendarSalon") || "";
+let gcalEvents = [];
+let gcalLoading = false;
+let gcalConnected = false;
+let renditionViewMode = "active";
+let sessionPicker = { clientId: null, y: 0, m: 0, date: "", salon: "", time: "", customMode: false, customTimeMode: false };
+let currentUser = null;
+let pendingOtp = null;
+let cloudTimer = null;
+let cloudSyncing = false;
+let cloudSyncPending = false;
+let lastSyncedState = null;
+let accessProfile = { role: "user", status: "active" };
+let adminUsers = [];
+let remoteSnapshotAt = null;
+
+function loadState(key = storageKey) {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key)) || {};
+    // rates se mergea con BASE_RATES: una copia local vieja no debe borrar claves de tarifa nuevas.
+    return { ...initialState(), ...parsed, rates: { ...BASE_RATES, ...(parsed.rates || {}) } };
+  }
+  catch { return initialState(); }
+}
+function saveState() { localStorage.setItem(storageKey, JSON.stringify(state)); render(); scheduleCloudSync(); }
+function storageKeyForUser(user) { return `${STORAGE_KEY}:${user.id}`; }
+function uid() { return crypto.randomUUID(); }
+function escapeHtml(value = "") { return String(value).replace(/[&<>'"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", "'":"&#39;", '"':"&quot;" }[c])); }
+function isHttpUrl(value) { return /^https?:\/\//i.test(String(value||"").trim()); }
+function parseDate(value) { return value ? new Date(`${value}T12:00:00`) : new Date(); }
+function dateText(value) { return new Intl.DateTimeFormat("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" }).format(parseDate(value)); }
+// Fecha corta con guiones y año a 2 dígitos ("10-10-26"), para la descripción del grupo de WhatsApp (ver groupDescriptionText()).
+function shortDashDate(value) { const d = parseDate(value); return `${String(d.getDate()).padStart(2,"0")}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getFullYear()).slice(-2)}`; }
+function monthText(value) { return new Intl.DateTimeFormat("es-AR", { month: "short" }).format(parseDate(value)).replace(".", ""); }
+function money(value) { return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(value || 0); }
+function daysUntil(value) { return Math.round((parseDate(value) - parseDate(todayIso())) / 86400000); }
+function packLabel(pack) { return ({ silver: "Silver", gold: "Golden / All Inclusive", vip: "VIP", informal: "Informal" })[pack] || pack; }
+// Prefijo que Pablo usa manualmente antes del código de cliente al armar la
+// descripción del grupo de WhatsApp (ver groupDescriptionText()). Si aparece
+// un salón nuevo que no está en esta lista, se usa "#" por defecto — se puede
+// sumar acá el prefijo que corresponda.
+const SALON_GROUP_PREFIXES = { "Pilar Hotel": "PH", "Quinta": "#" };
+function salonGroupPrefix(salon) { return SALON_GROUP_PREFIXES[salon] || "#"; }
+// Nombre del pack para la descripción del grupo de WhatsApp: más corto que
+// packLabel() (que se usa en el resto de la app), ej. "GOLD" en vez de
+// "Golden / All Inclusive".
+const GROUP_DESC_PACK_LABELS = { gold: "GOLD" };
+function groupDescPackLabel(pack) { return GROUP_DESC_PACK_LABELS[pack] || packLabel(pack); }
+// Texto para pegar en la descripción del grupo de WhatsApp del cliente, ej:
+// "PH43430 Boda Brenda y Alberto 10-10-26 Silver."
+function groupDescriptionText(c) { return `${salonGroupPrefix(c.salon)}${c.code} ${c.type} ${c.honoree} ${shortDashDate(c.eventDate)} ${groupDescPackLabel(c.pack)}.`; }
+function copyGroupDescription(clientId) {
+  const client = state.clients.find(c => c.id === clientId); if (!client) return;
+  const text = groupDescriptionText(client);
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text)
+      .then(() => toast("Descripción copiada · pegala en la descripción del grupo de WhatsApp"))
+      .catch(() => { console.error("No se pudo copiar al portapapeles"); prompt("No se pudo copiar automático. Copiá este texto (Ctrl+C):", text); });
+  } else {
+    prompt("Tu navegador no permite copiar automático. Copiá este texto (Ctrl+C):", text);
+  }
+}
+// Une una lista en prosa en español: "a, b y c" (o "e" en vez de "y" si el
+// último ítem arranca con sonido "i", como "Ituzaingó").
+function joinSpanishList(items) {
+  const list = items.filter(Boolean);
+  if (list.length <= 1) return list.join("");
+  const last = list[list.length - 1];
+  const connector = /^(i|hi(?!a))/i.test(last) ? "e" : "y";
+  return `${list.slice(0, -1).join(", ")} ${connector} ${last}`;
+}
+
+function createTasks(client) {
+  let definitions = [];
+  if (client.pack === "informal") {
+    definitions = [task("contact", "Contactar al cliente y confirmar cobertura", "Preparación"), task("informal", "Realizar evento informal", "Evento", true, "PERSONAL FOTOGRAFIA", "Evento Informal", "informal"), task("backup", "Completar backup del salón", "Evento"), task("sendPhotos", "Editar y enviar fotografías", "Entrega")];
+  } else {
+    definitions = [...CORE_TASKS];
+    if (["gold", "vip"].includes(client.pack)) definitions.splice(2, 0, ...GOLD_TASKS);
+    if (client.pack === "vip") definitions.push(...VIP_TASKS);
+  }
+  if (client.addons.includes("pant")) definitions.push(task("screenVideo", "Preparar video de entrada para pantalla", "Pre-evento", true, "COMPLEMENTOS", "Video de entrada para pantalla", "videoExtraClip"));
+  if (client.addons.includes("moda") || client.photoSession?.includesFashionProduction) definitions.push(task("bookModa", "Realizar adicional de book con producción de moda", "Pre-evento", true, "PERSONAL FOTOGRAFIA", "Adicional book con Moda", "bookModa"));
+  if (client.addons.includes("sansSouci")) {
+    // La sesión en Palacio Sans Souci reemplaza a la sesión de fotos Y de video estándar del pack:
+    // nunca conviven la tarea genérica y la de Sans Souci (si no se sacan bookCoveragePhoto/bookCoverageVideo
+    // acá, quedan tareas de $book duplicadas pagándose por una sola sesión real). El paquete de Sans Souci
+    // ya incluye el drone (confirmado por Pablo), por eso se agrega esa tarea también.
+    definitions = definitions.filter(d => d.key !== "bookCoveragePhoto" && d.key !== "bookCoverageVideo");
+    definitions.push(
+      task("sansSouciCoverage", "Realizar sesión de fotos en Palacio Sans Souci", "Adicionales", true, "PERSONAL FOTOGRAFIA", "Sesion Sans Souci (cobertura + edicion)", "book"),
+      task("sansSouciVideoCoverage", "Realizar sesión de video en Palacio Sans Souci", "Adicionales", true, "PERSONAL VIDEO", "Sesion de fotos (grabacion + edicion back)", "book"),
+      task("sansSouciDrone", "Realizar drone en sesión de Palacio Sans Souci (videógrafo)", "Adicionales", true, "COMPLEMENTOS", "Drone en sesión de fotos", "drone"),
+      task("sansSouciViatico", "Calcular y cargar viático a Palacio Sans Souci", "Adicionales", true, "PERSONAL FOTOGRAFIA", "VIATICOS (SOLO FOTOGRAFO)", "")
+    );
+  }
+  if (client.addons.includes("libro")) definitions.push(
+    task("signatureBook", "Diseñar libro de firmas", "Pre-evento", true, "COMPLEMENTOS", "Libro firmas (Fotografia Digital)", "signatureDesign"),
+    task("partyBookSelection", "Pedirle al cliente que envíe la selección de fotos del libro de fiesta", "Post-evento"),
+    task("partyBook", "Diseñar y enviar libro de fiesta al laboratorio", "Entrega", true, "COMPLEMENTOS", "Libro Fiesta (Fotografia Digital)", "partyBookDesign")
+  );
+  if (client.addons.includes("cere")) {
+    const ceremonyPhoto = task("ceremonyPhoto", "Realizar cobertura fotográfica de la ceremonia", "Evento", true, "PERSONAL FOTOGRAFIA", "Adicional ceremonia en salon", "ceremony");
+    const photoIdx = definitions.findIndex(d => d.key === "coveragePhoto");
+    if (photoIdx !== -1) definitions.splice(photoIdx + 1, 0, ceremonyPhoto); else definitions.push(ceremonyPhoto);
+    const ceremonyVideo = task("ceremonyVideo", "Realizar cobertura de video de la ceremonia", "Evento", true, "PERSONAL VIDEO", "Adicional ceremonia en salon", "ceremony");
+    const videoIdx = definitions.findIndex(d => d.key === "coverageVideoCapture");
+    if (videoIdx !== -1) definitions.splice(videoIdx + 1, 0, ceremonyVideo); else definitions.push(ceremonyVideo);
+  }
+  normalizeFlexServices(client.flexServices).forEach(code => { if (FLEX_TASKS[code]) definitions.push(FLEX_TASKS[code]); });
+  const hasSession = definitions.some(item => ["bookCoveragePhoto", "flexSessionPhoto", "sansSouciCoverage"].includes(item.key));
+  if (hasSession) definitions.push(task("totemDigital", "Preparar mural / tótem digital de la sesión", "Pre-evento", true, "COMPLEMENTOS", "Televisor Fotografia Digital", "totemDigital"));
+  // Salvaguarda: nunca generar dos tareas con la misma key para un mismo cliente
+  // (evita violar la restricción única tasks_client_id_task_key_key al sincronizar).
+  const seenKeys = new Set();
+  definitions = definitions.filter(def => (seenKeys.has(def.key) ? false : (seenKeys.add(def.key), true)));
+  return definitions.map(def => ({ ...def, id: uid(), status: "pending", responsible: "", completedAt: "", notes: "" }));
+}
+
+function isoDate(value){return value?String(value).slice(0,10):"";}
+function todayIso(){const date=new Date();return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,"0")}-${String(date.getDate()).padStart(2,"0")}`;}
+function isPastEvent(client){return String(client?.eventDate||"")<todayIso();}
+// Sesión de fotos ya agendada cuya fecha ya pasó (independiente de si el evento en sí ya pasó).
+function isPastSession(session){return Boolean(session?.date) && session.date<todayIso();}
+function periodEndFor(workDate){const date=parseDate(workDate);const advance=date.getDate()>20;date.setDate(1);if(advance)date.setMonth(date.getMonth()+1);return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,"0")}-20`;}
+
+function render() {
+  renderDashboard(); renderClients(); renderCalendar(); renderTasks(); renderRenditions(); renderSettings(); renderUsers();
+  document.getElementById("navRenditionCount").textContent = state.renditions.filter(r => r.status === "pending").length;
+}
+
+function renderDashboard() {
+  const activeClients = state.clients.filter(c => !isPastEvent(c));
+  const pendingTasks = state.clients.flatMap(c => c.tasks).filter(t => !["done", "na"].includes(t.status)).length;
+  const pendingR = state.renditions.filter(r => r.status === "pending" && !r.archivedAt);
+  const nextEvents = activeClients.sort((a,b) => parseDate(a.eventDate) - parseDate(b.eventDate)).slice(0, 7);
+  const waiting = state.clients.flatMap(c => c.tasks).filter(t => t.status === "waiting").length;
+  const contactList = contactWatchClients();
+  const sessionList = pendingSessionClients();
+  const attn = attentionItemsBuckets();
+  document.getElementById("dashboardView").innerHTML = `
+    <div class="kpi-strip">
+      ${kpiMini("Clientes activos", activeClients.length, "Eventos próximos")}
+      ${kpiMini("Tareas pendientes", pendingTasks, waiting ? `${waiting} esperando al cliente` : "Sin bloqueos registrados")}
+      ${kpiMini("Para rendir", pendingR.length, money(pendingR.reduce((s,r)=>s+r.amount,0)))}
+      ${kpiMini("Próx. 30 días", state.clients.filter(c => { const d=daysUntil(c.eventDate); return d>=0&&d<=30; }).length, "Eventos por preparar")}
+    </div>
+    ${contactList.length ? `<div class="panel contact-panel"><div class="panel-head"><h2>Clientes sin contactar</h2><span class="tag contact-count-tag">${contactList.length}</span></div><div class="panel-body contact-grid">${contactWatchItemsHtml(contactList)}</div></div>` : ""}
+    ${sessionList.length ? `<div class="panel session-panel"><div class="panel-head"><h2>Sesión de fotos sin realizar</h2><span class="tag session-count-tag">${sessionList.length}</span></div><div class="panel-body session-grid">${pendingSessionItemsHtml(sessionList)}</div></div>` : ""}
+    <div class="content-grid attention-grid">
+      <div class="panel"><div class="panel-head"><h2>Ya realizados · requieren atención</h2>${attn.realizedCount ? `<span class="muted">${attn.realizedCount}</span>` : ""}</div><div class="panel-body stack">
+        ${attn.realizedHtml || `<div class="empty"><strong>Todo al día</strong>No hay coberturas pendientes de confirmar.</div>`}
+      </div></div>
+      <div class="panel"><div class="panel-head"><h2>Por venir · requieren atención</h2>${attn.upcomingCount ? `<span class="muted">${attn.upcomingCount}</span>` : ""}</div><div class="panel-body stack">
+        ${attn.upcomingHtml || `<div class="empty"><strong>Todo en orden</strong>No hay alertas urgentes.</div>`}
+      </div></div>
+    </div>
+    <div class="panel"><div class="panel-head"><h2>Próximos eventos</h2><button class="ghost-btn" data-go="clients">Ver todos</button></div>
+      ${nextEvents.length ? `<div>${nextEvents.map(eventRow).join("")}</div>` : empty("No hay eventos próximos", "Los eventos que ya pasaron están en Clientes → Realizados.")}
+    </div>`;
+}
+function kpiMini(label, value, note) { return `<div class="kpi-mini"${note ? ` title="${escapeHtml(note)}"` : ""}><strong>${value}</strong><span>${escapeHtml(label)}</span></div>`; }
+function eventRow(c) { const d=parseDate(c.eventDate), pct=progress(c); return `<div class="event-row"><div class="date-box"><strong>${String(d.getDate()).padStart(2,"0")}</strong><span>${monthText(c.eventDate)}</span></div><div class="event-name"><strong>${escapeHtml(c.honoree)}</strong><span>#${escapeHtml(c.code)} · ${escapeHtml(c.salon)}</span></div><span class="tag">${packLabel(c.pack)}</span><span class="muted">${pct}% completo</span><button class="secondary-btn" data-open-client="${c.id}">Abrir</button></div>`; }
+function salonTagClass(salon) {
+  const s = String(salon || "").trim().toLowerCase();
+  if (s === "quinta") return " salon-tag-quinta";
+  if (s === "pilar hotel") return " salon-tag-pilarhotel";
+  return "";
+}
+function attentionUrgency(days) {
+  if (days <= 7) return "urgency-red";
+  if (days <= 20) return "urgency-yellow";
+  return "urgency-green";
+}
+function attentionItemsBuckets() {
+  const realized=[], upcoming=[];
+  state.clients.forEach(c => {
+    const days=daysUntil(c.eventDate), incomplete=c.tasks.filter(t=>!["done","na"].includes(t.status)),hasPrintedBook=(c.addons||[]).includes("libro"),bookDue=hasPrintedBook&&days>=0&&days<=30;
+    const prepPending=c.tasks.filter(t=>t.phase==="Preparación"&&!["done","na"].includes(t.status)),prepDue=prepPending.length&&days>=0&&days<=30;
+    const sortDays = days < 0 ? 0 : days;
+    if(bookDue){const when=days===0?"Evento hoy":`Faltan ${days} ${days===1?"día":"días"}`;upcoming.push({days:sortDays,html:`<button class="attention-alert ${attentionUrgency(days)} attention-blink" data-open-client="${c.id}"><div class="attention-top"><strong>${escapeHtml(c.honoree)}</strong><span class="tag attention-salon-tag${salonTagClass(c.salon)}">${escapeHtml(c.salon||"")}</span></div><span>Libro Combo / material impreso</span><small>${when} · Confirmar selección de fotos, diseño y envío a impresión.</small></button>`});}
+    else if(prepDue){const when=days===0?"Evento hoy":`Faltan ${days} ${days===1?"día":"días"}`;upcoming.push({days:sortDays,html:`<button class="attention-alert ${attentionUrgency(days)}" data-open-client="${c.id}"><div class="attention-top"><strong>${escapeHtml(c.honoree)}</strong><span class="tag attention-salon-tag${salonTagClass(c.salon)}">${escapeHtml(c.salon||"")}</span></div><span>Faltan confirmar datos del evento</span><small>${when} · ${prepPending.map(t=>t.title).join(" · ")}</small></button>`});}
+    else if(days>=0&&days<=14&&incomplete.length) upcoming.push({days:sortDays,html:`<button class="attention-alert ${attentionUrgency(days)}" data-open-client="${c.id}"><div class="attention-top"><strong>${escapeHtml(c.honoree)}</strong><span class="tag attention-salon-tag${salonTagClass(c.salon)}">${escapeHtml(c.salon||"")}</span></div><span>Tareas pendientes</span><small>Faltan ${days} días · ${incomplete.length} tareas abiertas</small></button>`});
+    if(!c.isExternal&&days<0){
+      const pendingCoverage=c.tasks.filter(t=>["coveragePhoto","coveragePhotoEdit","coverageVideoCapture","coverageVideoEdit"].includes(t.key)&&!["done","na"].includes(t.status));
+      if(pendingCoverage.length) realized.push({days:0,html:`<div class="attention-alert urgency-red attention-realized"><div class="attention-top"><strong>${escapeHtml(c.honoree)}</strong><span class="tag attention-salon-tag${salonTagClass(c.salon)}">${escapeHtml(c.salon||"")}</span></div><span>Cobertura sin confirmar</span><small>Evento ya realizado · tildá lo que ya está listo</small><div class="attention-check-list">${pendingCoverage.map(t=>`<label class="attention-check-item"><input type="checkbox" data-task-check="${c.id}|${t.id}">${escapeHtml(t.title)}</label>`).join("")}</div><button type="button" class="ghost-btn attention-open-link" data-open-client="${c.id}">Ver ficha completa</button></div>`});
+    }
+    const hasPhotoSession = canScheduleSession(c);
+    if(!c.isExternal&&hasPrintedBook&&!hasPhotoSession&&!c.dismissedConflicts?.libroCombo) upcoming.push({days:sortDays,html:`<div class="attention-alert attention-conflict"><button data-open-client="${c.id}" class="attention-alert-main"><div class="attention-top"><strong>${escapeHtml(c.honoree)}</strong><span class="tag attention-salon-tag${salonTagClass(c.salon)}">${escapeHtml(c.salon||"")}</span></div><span>Conflicto de venta: Libro Combo sin sesión</span><small>El Libro Combo requiere una sesión de fotos. Agregá Mini Flex/Flex con "Sesión extra - fotografía", o Sans Souci, para habilitarla.</small></button><button type="button" class="ghost-btn attention-dismiss" data-dismiss-conflict="${c.id}" data-conflict-key="libroCombo" title="Ya lo resolví con el cliente">Marcar resuelto</button></div>`});
+    const sessionTask=c.tasks.find(t=>t.key==="coordinateSession"), sessionDue=sessionTask&&!["done","na"].includes(sessionTask.status)&&days>=0&&days<=30;
+    if(!c.isExternal&&sessionDue){const when=days===0?"Evento hoy":`Faltan ${days} ${days===1?"día":"días"}`;upcoming.push({days:sortDays,html:`<button class="attention-alert ${attentionUrgency(days)} attention-blink" data-open-client="${c.id}"><div class="attention-top"><strong>${escapeHtml(c.honoree)}</strong><span class="tag attention-salon-tag${salonTagClass(c.salon)}">${escapeHtml(c.salon||"")}</span></div><span>Sesión de fotos sin agendar</span><small>${when} · Coordinar y reservar la sesión de fotos.</small></button>`});}
+    const extraServiceKeys=["flexLive","flexPhotoExtra","flexVideoExtra"];
+    const extraServicesPending=c.tasks.filter(t=>extraServiceKeys.includes(t.key)&&!["done","na"].includes(t.status));
+    if(!c.isExternal&&extraServicesPending.length&&days>=0&&days<=20){const when=days===0?"Evento hoy":`Faltan ${days} ${days===1?"día":"días"}`;upcoming.push({days:sortDays,html:`<button class="attention-alert ${attentionUrgency(days)} attention-blink" data-open-client="${c.id}"><div class="attention-top"><strong>${escapeHtml(c.honoree)}</strong><span class="tag attention-salon-tag${salonTagClass(c.salon)}">${escapeHtml(c.salon||"")}</span></div><span>Servicios extra sin confirmar</span><small>${when} · ${extraServicesPending.map(t=>t.title).join(" · ")}</small></button>`});}
+  });
+  return {
+    realizedHtml: realized.sort((a,b)=>a.days-b.days).slice(0,8).map(item=>item.html).join(""),
+    realizedCount: realized.length,
+    upcomingHtml: upcoming.sort((a,b)=>a.days-b.days).slice(0,8).map(item=>item.html).join(""),
+    upcomingCount: upcoming.length,
+  };
+}
+function contactWatchClients() {
+  return state.clients
+    .filter(c => !c.isExternal && !c.contactedAt && daysUntil(c.eventDate) <= 90)
+    .sort((a,b) => daysUntil(a.eventDate) - daysUntil(b.eventDate));
+}
+function contactWatchItemsHtml(list) {
+  return list.map(c => {
+      const days = daysUntil(c.eventDate), level = days <= 60 ? "danger" : "warning";
+      const when = days < 0 ? `venció hace ${Math.abs(days)} d` : days === 0 ? "es hoy" : `faltan ${days} d`;
+      return `<button class="contact-watch-item ${level}" data-open-client="${c.id}" title="Sin contactar por WhatsApp · evento ${dateText(c.eventDate)}"><span class="contact-watch-dot"></span><span class="tag attention-salon-tag${salonTagClass(c.salon)}">${escapeHtml(c.salon||"")}</span>${escapeHtml(c.honoree)} · ${when}</button>`;
+    }).join("");
+}
+// Clientes cuyo evento tiene una sesión de fotos previa habilitada (pack
+// gold/vip, Sans Souci, o "Sesión extra" en Flex) pero todavía no la
+// agendaron (photoSession.date vacío), con el evento entre 30 y 90 días.
+// Antes de los 30 días ya aparece la alerta roja "Sesión de fotos sin
+// agendar" en el panel "Por venir · requieren atención"; este listado es el
+// aviso temprano, en la misma línea que "Clientes sin contactar".
+function pendingSessionClients() {
+  return state.clients
+    .filter(c => !c.isExternal && canScheduleSession(c) && !c.photoSession?.date)
+    .filter(c => { const d = daysUntil(c.eventDate); return d >= 30 && d <= 90; })
+    .sort((a,b) => daysUntil(a.eventDate) - daysUntil(b.eventDate));
+}
+function pendingSessionItemsHtml(list) {
+  return list.map(c => {
+      const days = daysUntil(c.eventDate), level = days <= 60 ? "danger" : "warning";
+      const when = `faltan ${days} d`;
+      return `<button class="session-watch-item ${level}" data-open-client="${c.id}" title="Sesión de fotos sin agendar · evento ${dateText(c.eventDate)}"><span class="session-watch-dot"></span><span class="tag attention-salon-tag${salonTagClass(c.salon)}">${escapeHtml(c.salon||"")}</span>${escapeHtml(c.honoree)} · ${when}</button>`;
+    }).join("");
+}
+
+function renderClients() {
+  const modeClients=state.clients.filter(c=>clientViewMode==="archived"?isPastEvent(c):!isPastEvent(c));
+  const salons=salonsInUse();
+  const months=[...new Set(modeClients.map(c=>monthKey(c.eventDate)).filter(Boolean))].sort();
+  const upcomingCount=state.clients.filter(c=>!isPastEvent(c)).length,archivedCount=state.clients.length-upcomingCount;
+  const _html = `<div class="view-switch" aria-label="Archivo de eventos"><button class="${clientViewMode==="upcoming"?"active":""}" data-client-view="upcoming">Próximos <b>${upcomingCount}</b></button><button class="${clientViewMode==="archived"?"active":""}" data-client-view="archived">Realizados <b>${archivedCount}</b></button></div><div class="client-filters"><div class="filter-heading"><div><p class="eyebrow">${clientViewMode==="archived"?"Archivo de eventos":"Organizar eventos"}</p><strong>${clientViewMode==="archived"?"Eventos cuya fecha ya pasó":"Elegí un salón y un mes"}</strong></div><span id="clientResultCount" class="muted">${eventCountLabel(modeClients.length)}</span></div><div class="toolbar"><div class="search"><input id="clientSearch" placeholder="Buscar por nombre o código"></div><select id="clientSalonFilter" aria-label="Filtrar por salón"><option value="">Todos los salones</option>${salons.map(s=>`<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("")}</select><select id="clientMonthFilter" aria-label="Filtrar por mes"><option value="">Todos los meses</option>${months.map(m=>`<option value="${m}">${monthLabel(m)}</option>`).join("")}</select><select id="clientPackFilter" aria-label="Filtrar por pack"><option value="">Todos los packs</option><option value="silver">Silver</option><option value="gold">Golden / All Inclusive</option><option value="vip">VIP</option><option value="informal">Informal</option></select><select id="clientAddonFilter" aria-label="Filtrar por adicional"><option value="">Todos los adicionales</option>${ADDONS.map(([v,l])=>`<option value="${v}">${l}</option>`).join("")}</select></div></div><div class="client-actions"><button class="primary-btn" id="importClientsBtn">Importar lote</button><input id="clientCsvInput" type="file" accept=".csv,text/csv" hidden></div><div id="clientGrid" class="client-grid">${clientCards(modeClients)}</div>`;
+  document.getElementById("clientsView").innerHTML = _html;
+  const _s = document.getElementById("clientSearch");
+  const _sf = document.getElementById("clientSalonFilter");
+  const _mf = document.getElementById("clientMonthFilter");
+  const _pf = document.getElementById("clientPackFilter");
+  const _adf = document.getElementById("clientAddonFilter");
+  if(_s) _s.value = clientFilters.search;
+  if(_sf) _sf.value = clientFilters.salon;
+  if(_mf) _mf.value = clientFilters.month;
+  if(_pf) _pf.value = clientFilters.pack;
+  if(_adf) _adf.value = clientFilters.addon;
+  if(clientFilters.search || clientFilters.salon || clientFilters.month || clientFilters.pack || clientFilters.addon) filterClients();
+}
+function monthKey(value){return /^\d{4}-\d{2}/.test(String(value||""))?String(value).slice(0,7):"";}
+function monthLabel(value){const [year,month]=String(value).split("-");if(!year||!month)return value;const label=new Intl.DateTimeFormat("es-AR",{month:"long",year:"numeric"}).format(new Date(Number(year),Number(month)-1,1));return label.charAt(0).toUpperCase()+label.slice(1);}
+function eventCountLabel(count){return `${count} ${count===1?"evento":"eventos"}`;}
+function shiftMonth(key,delta){const [y,m]=key.split("-").map(Number);const d=new Date(y,m-1+delta,1);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;}
+function calendarSalonClass(salon,salons){const idx=salons.indexOf(salon);return `cal-salon-${idx>=0?idx%4:4}`;}
+async function fetchGcalEvents(month) {
+  if (!currentUser) return;
+  gcalLoading = true;
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return;
+    const res = await fetch(
+      `${supabaseUrl}/functions/v1/google-calendar-events?month=${month}`,
+      { headers: { Authorization: `Bearer ${session.access_token}` } }
+    );
+    const data = await res.json();
+    if (data.error === "not_connected") { gcalConnected = false; gcalEvents = []; }
+    else if (data.events) { gcalConnected = true; gcalEvents = data.events; }
+  } catch(e) { console.error("gcal fetch error:", e); }
+  finally { gcalLoading = false; renderCalendar(); }
+}
+async function connectGoogleCalendar() {
+  if (!currentUser) return;
+  // El "state" del OAuth ahora lo firma el backend (HMAC) en vez de mandar
+  // el user id en crudo: antes cualquiera podía armar la URL de Google a
+  // mano con el id de otra persona como state y, si completaba el consent
+  // con su propia cuenta de Google, terminaba guardando su refresh_token
+  // en el perfil de esa otra persona.
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const res = await fetch(`${supabaseUrl}/functions/v1/google-calendar-auth`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${session?.access_token}` },
+    });
+    if (!res.ok) throw new Error("No se pudo iniciar la conexión");
+    const { authUrl } = await res.json();
+    window.location.href = authUrl;
+  } catch (err) {
+    console.error(err);
+    toast("No se pudo conectar con Google Calendar");
+  }
+}
+function renderCalendar(){
+  const view=document.getElementById("calendarView"); if(!view) return;
+  const salons=salonsInUse();
+  const [year,month]=calendarMonth.split("-").map(Number);
+  const startWeekday=(new Date(year,month-1,1).getDay()+6)%7;
+  const daysInMonth=new Date(year,month,0).getDate();
+  const todayKey=todayIso();
+  const eventsByDay=new Map();
+  state.clients.filter(c=>monthKey(c.eventDate)===calendarMonth&&(!calendarSalonFilter||c.salon===calendarSalonFilter)).forEach(c=>{
+    const day=Number(String(c.eventDate).slice(8,10));
+    if(!eventsByDay.has(day))eventsByDay.set(day,[]);
+    eventsByDay.get(day).push(c);
+  });
+  const gcalByDay = new Map();
+  gcalEvents.filter(e => e.date && e.date.startsWith(calendarMonth)).forEach(e => {
+    const day = Number(e.date.slice(8, 10));
+    if (!gcalByDay.has(day)) gcalByDay.set(day, []);
+    gcalByDay.get(day).push(e);
+  });
+  const cells=[];
+  for(let i=0;i<startWeekday;i++)cells.push(`<div class="cal-cell empty"></div>`);
+  for(let day=1;day<=daysInMonth;day++){
+    const dateKey=`${calendarMonth}-${String(day).padStart(2,"0")}`;
+    const items=(eventsByDay.get(day)||[]).sort((a,b)=>String(a.salon||"").localeCompare(String(b.salon||"")));
+    const gcalItems=(gcalByDay.get(day)||[]);
+    const gcalHtml=gcalItems.map(e=>`<div class="cal-gcal-event" title="${escapeHtml(e.title)}${e.time?' · '+e.time:''}${e.location?' · '+e.location:''}">📅 ${escapeHtml(e.title)}${e.time?` <span class="cal-gcal-time">${e.time}</span>`:''}</div>`).join("");
+    cells.push(`<div class="cal-cell${dateKey===todayKey?" today":""}"><span class="cal-day">${day}</span>${items.map(c=>`<button class="cal-event ${calendarSalonClass(c.salon,salons)}" data-open-client="${c.id}" title="${escapeHtml(c.honoree)} · ${escapeHtml(c.salon||"")}">${escapeHtml(c.honoree)}</button>`).join("")}${gcalHtml}</div>`);
+  }
+  const trailing=(7-(cells.length%7))%7;
+  for(let i=0;i<trailing;i++)cells.push(`<div class="cal-cell empty"></div>`);
+  const weekdays=["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"];
+  const gcalBtn=gcalConnected
+    ?`<button class="ghost-btn cal-gcal-connected" id="calGcalRefresh">📅 Sincronizado</button>`
+    :`<button class="ghost-btn" id="calGcalConnect">📅 Conectar Google Calendar</button>`;
+  const gcalOpenBtn=`<button class="ghost-btn" id="calGcalOpen" type="button">↗ Abrir Google Calendar</button>`;
+  view.innerHTML=`
+    <div class="rendition-controls">
+      <button class="ghost-btn" id="calPrev">‹ Mes anterior</button>
+      <strong class="cal-month-label">${monthLabel(calendarMonth)}</strong>
+      <button class="ghost-btn" id="calNext">Mes siguiente ›</button>
+      <button class="ghost-btn" id="calToday">Hoy</button>
+      <select id="calendarSalonFilter" aria-label="Filtrar por salón"><option value="">Todos los salones</option>${salons.map(s=>`<option value="${escapeHtml(s)}"${calendarSalonFilter===s?" selected":""}>${escapeHtml(s)}</option>`).join("")}</select>
+      ${gcalBtn}
+      ${gcalOpenBtn}
+    </div>
+    <div class="cal-grid">
+      ${weekdays.map(w=>`<div class="cal-weekday">${w}</div>`).join("")}
+      ${cells.join("")}
+    </div>`;
+}
+function whatsappNumber(value){let digits=String(value||"").replace(/\D/g,"").replace(/^00/,"");if(!digits)return "";if(digits.startsWith("549"))return digits;if(digits.startsWith("54"))return `549${digits.slice(2)}`;if(digits.length>10)return digits;return `549${digits.replace(/^0/,"")}`;}
+// Varias personas pueden compartir el mismo login de Janos Control pero
+// querer firmar sus mensajes de WhatsApp con su propio nombre y texto. Como
+// no hay forma de distinguirlas por la cuenta (es la misma para las 3), cada
+// dispositivo (celular/computadora) recuerda cuál es "su" remitente en
+// localStorage — no viaja a la nube, es local a ese navegador.
+function whatsappSenders(){
+  const list=state.settings?.whatsappSenders;
+  if(Array.isArray(list)&&list.length)return list.map(s=>({id:s.id,name:s.name}));
+  // Compatibilidad con el mensaje único que había antes de esto.
+  return [{id:"default",name:"General"}];
+}
+function activeWhatsappSender(){
+  const senders=whatsappSenders();
+  const activeId=localStorage.getItem("janosActiveSender");
+  return senders.find(s=>s.id===activeId)||senders[0];
+}
+// El texto ya no depende de quién firma: se elige según el tipo de evento
+// del cliente (ver WHATSAPP_TYPE_TEMPLATES). "general" es el mensaje de
+// respaldo para tipos sin mensaje propio, y también el resultado de migrar
+// el mensaje único que había antes de separar por tipo.
+function whatsappTemplatesByType(){
+  const map=state.settings?.whatsappTemplatesByType;
+  if(map&&typeof map==="object"&&Object.keys(map).length)return map;
+  const legacy=state.settings?.whatsappTemplate||state.settings?.whatsappSenders?.[0]?.template||DEFAULT_WHATSAPP_TEMPLATE;
+  return {general:legacy};
+}
+function whatsappTemplateForType(type){
+  const map=whatsappTemplatesByType();
+  return map[type]||map.general||DEFAULT_WHATSAPP_TEMPLATE;
+}
+// Valores de variables compartidos por todos los mensajes (presentación
+// privada y speeches de grupo), para no duplicar esta lista en cada uno.
+function messagePlaceholderValues(client){const metadata=currentUser?.user_metadata||{};const sender=activeWhatsappSender();const session=client.photoSession;return {nombre:client.clientName||client.honoree,homenajeado:client.honoree,fecha:dateText(client.eventDate),salon:client.salon,tipo:client.type,codigo:client.code,remitente:sender?.name||metadata.first_name||metadata.full_name||"el equipo",salonesSesion:joinSpanishList(SESSION_SALONS.filter(name=>name!=="Sans Souci")),diaFechaSesion:sessionSpeechDateText(session),horaSesion:sessionSpeechTimeText(session?.time),salonSesion:session?.location||"",mapaSesion:sessionMapsUrl(session)};}
+function fillTemplate(template,values){return Object.entries(values).reduce((message,[key,value])=>message.split(`{${key}}`).join(String(value||"")),template);}
+function whatsappMessage(client){const template=whatsappTemplateForType(client.type);return fillTemplate(template,messagePlaceholderValues(client));}
+// Mensajes de grupo (speeches): plantillas fijas, no por tipo de evento,
+// guardadas en state.settings.speechTemplates. Editables en Configuración,
+// con el mismo patrón de "Restaurar mensaje original" que los de arriba.
+function speechTemplates(){const map=state.settings?.speechTemplates;return (map&&typeof map==="object")?map:{};}
+function speechTemplateFor(key){const def=SPEECH_TYPES.find(s=>s.key===key)?.default||"";return (speechTemplates()[key]||def).replace(/(?:Dylan|\{remitente\}) elige la música porque[^\n]*/g,"Generalmente nosotros elegimos la música porque por experiencia sabemos cuál se ajusta mejor al video, pero si quieren algo puntual, pueden consultarnos.").replace("Quedan sujetos a disponibilidad (y a cancelaciones si surge un evento ese día), así que tenemos que coordinar una fecha en la que coincidamos nosotros, ustedes, y que el lugar esté libre.","Quedan sujetos a disponibilidad, así que tenemos que coordinar una fecha en la que coincidamos nosotros, ustedes, y que el lugar esté libre.\n\nTengan en cuenta que el salón que elijamos puede cancelarse si surge un evento ese día: estamos en temporada de eventos empresariales y escolares, y durante la semana se hacen muchos eventos corporativos. Si pasa, no se preocupen: hacemos la sesión en otro salón cercano.");}
+function speechMessage(client,key){return fillTemplate(speechTemplateFor(key),messagePlaceholderValues(client));}
+function saveSpeechTemplates(){const updated={};SPEECH_TYPES.forEach(s=>{const value=document.querySelector(`[data-speech-template="${CSS.escape(s.key)}"]`)?.value.trim()||"";updated[s.key]=value||s.default;});state.settings={...(state.settings||{}),speechTemplates:updated};saveState();renderSettings();toast("Mensajes de grupo guardados");}
+// Copia el speech al portapapeles y abre el grupo de WhatsApp guardado en
+// la ficha del cliente (client.whatsappGroupUrl), para pegarlo ahí. WhatsApp
+// no permite prellenar texto en el link de invitación de un grupo ya
+// existente (a diferencia de wa.me con un número, que sí abre un chat 1 a 1
+// con el texto cargado) — por eso acá se copia y el único paso manual es
+// Ctrl+V y Enter, en el grupo correcto de una.
+//
+// Importante sobre el orden: el grupo se abre en WhatsApp de escritorio
+// (ver openWhatsappGroupLink), y esa app se lleva el foco. La copia al
+// portapapeles se arranca ANTES de abrir la app, mientras Janos Control
+// todavía tiene el foco (si no, Chrome la rechaza), y sin "await" para que
+// la apertura siga en la misma tanda de eventos que el click (si no, Chrome
+// bloquea abrir la app). Si el portapapeles falla igual (permisos,
+// navegador viejo, etc.), se muestra el texto en un cuadro para copiarlo a
+// mano en vez de fallar en silencio.
+function sendSpeech(clientId,key){
+  const client=state.clients.find(c=>c.id===clientId); if(!client)return;
+  const speechDef=SPEECH_TYPES.find(s=>s.key===key);
+  const groupUrl=(client.whatsappGroupUrl||"").trim();
+  if(!groupUrl){ openClientForm(client); toast("Pegá primero el link del grupo de WhatsApp en la ficha para poder enviar speeches."); return; }
+  const message=speechMessage(client,key);
+  if(navigator.clipboard?.writeText){
+    navigator.clipboard.writeText(message)
+      .then(()=>toast("Mensaje copiado · pegalo (Ctrl+V) en el grupo que se abrió"))
+      .catch(()=>{ console.error("No se pudo copiar al portapapeles"); prompt("No se pudo copiar automático. Copiá este texto (Ctrl+C) y pegalo en el grupo:", message); });
+    openWhatsappGroupLink(groupUrl);
+  } else {
+    openWhatsappGroupLink(groupUrl);
+    prompt("Tu navegador no permite copiar automático. Copiá este texto (Ctrl+C) y pegalo en el grupo:", message);
+  }
+  client.history=client.history||[];
+  client.history.push({date:new Date().toISOString(),text:`Speech "${speechDef?.label||key}" copiado para el grupo`,type:"speech_sent",speechKey:key});
+  saveState();
+}
+function addWhatsappSender(){
+  const senders=whatsappSenders();
+  const newSender={id:uid(),name:""};
+  state.settings={...(state.settings||{}),whatsappSenders:[...senders,newSender]};
+  saveState();
+  renderSettings();
+}
+function deleteWhatsappSender(id){
+  const senders=whatsappSenders();
+  if(senders.length<=1){toast("Tiene que quedar al menos un remitente.");return;}
+  if(!confirm("¿Eliminar este remitente?"))return;
+  state.settings={...(state.settings||{}),whatsappSenders:senders.filter(s=>s.id!==id)};
+  saveState();
+  if(localStorage.getItem("janosActiveSender")===id)localStorage.removeItem("janosActiveSender");
+  renderSettings();
+}
+function saveWhatsappSenders(){
+  const senders=whatsappSenders();
+  const updatedSenders=senders.map(s=>{
+    const name=document.querySelector(`[data-sender-name="${CSS.escape(s.id)}"]`)?.value.trim()||"";
+    return {id:s.id,name:name||"Sin nombre"};
+  });
+  const updatedTemplates={};
+  WHATSAPP_TYPE_TEMPLATES.forEach(t=>{
+    const value=document.querySelector(`[data-type-template="${CSS.escape(t.key)}"]`)?.value.trim()||"";
+    updatedTemplates[t.key]=value||t.default||DEFAULT_WHATSAPP_TEMPLATE;
+  });
+  state.settings={...(state.settings||{}),whatsappSenders:updatedSenders,whatsappTemplatesByType:updatedTemplates};
+  saveState();
+  renderSettings();
+  toast("Mensajes de WhatsApp guardados");
+}
+// WhatsApp de escritorio: en vez de abrir wa.me / chat.whatsapp.com en una
+// pestaña de Chrome (que muestra la página intermedia "Abrir aplicación /
+// Continuar en WhatsApp Web"), se abre directo la app de WhatsApp instalada
+// en la PC con su protocolo whatsapp://, en el mismo formato que usa la
+// propia página de WhatsApp: whatsapp://send/?phone=&text= para el chat 1 a 1
+// y whatsapp://chat/?code= para un grupo. La primera vez Chrome pregunta
+// "¿Abrir WhatsApp?": tildando "Permitir siempre" no vuelve a preguntar.
+function whatsappUrl(client){const phone=whatsappNumber(client.clientPhone);return phone?`whatsapp://send/?phone=${phone}&text=${encodeURIComponent(whatsappMessage(client))}`:"";}
+function whatsappGroupAppUrl(url){const m=String(url||"").match(/chat\.whatsapp\.com\/(?:invite\/)?([A-Za-z0-9_-]+)/i);return m?`whatsapp://chat/?code=${m[1]}`:"";}
+// Abre un link whatsapp:// sin dejar una pestaña en blanco: el navegador se
+// lo pasa a la app de escritorio y Janos Control queda como estaba.
+function openWhatsappApp(url){const a=document.createElement("a");a.href=url;a.style.display="none";document.body.appendChild(a);a.click();a.remove();}
+// Link de grupo guardado en la ficha: si es un link de invitación
+// (chat.whatsapp.com/...) se abre en la app; cualquier otro link se abre
+// en una pestaña como antes.
+function openWhatsappGroupLink(url){const appUrl=whatsappGroupAppUrl(url);if(appUrl)openWhatsappApp(appUrl);else window.open(url,"janosExternal","noopener,noreferrer");}
+function contactClient(id){const client=state.clients.find(item=>item.id===id);if(!client)return;const url=whatsappUrl(client);if(!url){openClientForm(client);toast("Agregá el WhatsApp del cliente para contactarlo");return;}openWhatsappApp(url);client.contactedAt=new Date().toISOString();client.history=client.history||[];client.history.push({date:client.contactedAt,text:"Contacto inicial por WhatsApp registrado",type:"whatsapp_contact"});saveState();refreshTaskViews(id);toast("Contacto registrado");}
+function resetClientContact(id){const client=state.clients.find(item=>item.id===id);if(!client)return;client.contactedAt="";client.history=client.history||[];client.history.push({date:new Date().toISOString(),text:"Se deshizo la marca de contacto inicial",type:"whatsapp_contact_reset"});saveState();refreshTaskViews(id);document.getElementById("resetContactBtn").classList.add("hidden");toast("Contacto deshecho");}
+function openWhatsappGroup(id){const client=state.clients.find(item=>item.id===id);if(!client)return;const url=(client.whatsappGroupUrl||"").trim();if(!url){openClientForm(client);toast("Pegá el link del grupo de WhatsApp para poder abrirlo");return;}openWhatsappGroupLink(url);}
+async function openDriveFolder(id){
+  const client=state.clients.find(item=>item.id===id);if(!client)return;
+  const url=(client.driveUrl||"").trim();
+  if(!url){openClientForm(client);toast("Pegá el link de Drive para poder abrirlo");return;}
+  if(!isHttpUrl(url)){openClientForm(client);toast("El link de Drive debe empezar con https://");return;}
+  if(driveAutoAvailable(client.salon)){
+    try{
+      const {checked,exists}=await checkDriveFolderExists(id);
+      if(checked&&!exists){
+        if(confirm("La carpeta de Drive fue borrada. ¿Querés que se vuelva a crear?")){
+          await createDriveFolder(id);
+        }
+        return;
+      }
+    }catch(err){
+      // Si no se pudo verificar (ej. sin conexión), no bloqueamos: abrimos el link como antes.
+    }
+  }
+  window.open(url,"janosExternal","noopener,noreferrer");
+}
+function addDaysIso(value,days){const d=parseDate(value);d.setDate(d.getDate()+days);return d.toISOString().slice(0,10);}
+function salonSlug(salon){return String(salon||"").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/(^-|-$)/g,"");}
+async function saveZohoAccount(salon){
+  const slug=salonSlug(salon);
+  const email=document.getElementById(`zohoEmail-${slug}`)?.value.trim()||"";
+  const password=document.getElementById(`zohoAppPassword-${slug}`)?.value||"";
+  const fromName=document.getElementById(`zohoFromName-${slug}`)?.value.trim()||"";
+  if(email&&!/^\S+@\S+\.\S+$/.test(email)){toast("Ingresá un email válido.");return;}
+  const btn=document.querySelector(`[data-save-zoho="${CSS.escape(salon)}"]`);if(btn)btn.disabled=true;
+  try{
+    await saveMyZohoAccount({salon,email,password,fromName});
+    accessProfile.zohoAccounts=accessProfile.zohoAccounts||{};
+    const prev=accessProfile.zohoAccounts[salon]||{};
+    accessProfile.zohoAccounts[salon]={email:email||prev.email||"",fromName:fromName||prev.fromName||"",hasPassword:Boolean(password)||Boolean(prev.hasPassword)};
+    renderSettings();
+    const acc=accessProfile.zohoAccounts[salon];
+    if(acc.email&&acc.hasPassword){
+      try{
+        await verifyMyZohoAccount(salon);
+        toast(`Cuenta de ${salon} guardada y verificada con Zoho ✓`);
+      }catch(verifyErr){
+        if(verifyErr.invalid){
+          alert("Usuario y/o contraseña incorrectos.");
+        }else{
+          toast(`Se guardó, pero ${(verifyErr.message||"no se pudo verificar con Zoho").charAt(0).toLowerCase()}${(verifyErr.message||"no se pudo verificar con Zoho").slice(1)}`);
+        }
+      }
+    }else{
+      toast(`Cuenta de ${salon} guardada`);
+    }
+  }catch(err){
+    toast(err.message||"No se pudo guardar la cuenta de Zoho");
+  }finally{
+    if(btn)btn.disabled=false;
+  }
+}
+async function clearZohoAccount(salon){
+  const confirmMsg=accessProfile.role==="admin"
+    ?`¿Borrar la cuenta de Zoho de ${salon}? Volvés a usar la cuenta general de ese salón para enviar el material.`
+    :`¿Borrar la cuenta de Zoho de ${salon}? Vas a dejar de poder enviar material para ese salón hasta que cargues una cuenta de nuevo.`;
+  if(!confirm(confirmMsg))return;
+  const btn=document.querySelector(`[data-clear-zoho="${CSS.escape(salon)}"]`);if(btn)btn.disabled=true;
+  try{
+    await clearMyZohoAccount(salon);
+    if(accessProfile.zohoAccounts)delete accessProfile.zohoAccounts[salon];
+    renderSettings();
+    toast(`Cuenta de ${salon} borrada`);
+  }catch(err){
+    toast(err.message||"No se pudo borrar la cuenta de Zoho");
+  }finally{
+    if(btn)btn.disabled=false;
+  }
+}
+async function connectDrive(salon){
+  const btn=document.querySelector(`[data-connect-drive="${CSS.escape(salon)}"]`);if(btn)btn.disabled=true;
+  try{
+    await connectDriveAccount(salon);
+    toast(`Se abrió una pestaña de Google para conectar el Drive de ${salon}. Cuando termines ahí, volvé y tocá "Actualizar estado".`);
+  }catch(err){
+    toast(err.message||"No se pudo iniciar la conexión con Drive");
+  }finally{
+    if(btn)btn.disabled=false;
+  }
+}
+async function saveDriveRoot(salon){
+  const slug=salonSlug(salon);
+  const rootFolder=document.getElementById(`driveRootFolder-${slug}`)?.value.trim()||"";
+  if(!rootFolder){toast("Pegá el link de la carpeta raíz de Drive.");return;}
+  const btn=document.querySelector(`[data-save-drive-root="${CSS.escape(salon)}"]`);if(btn)btn.disabled=true;
+  try{
+    const {rootFolderId}=await saveDriveRootFolder(salon,rootFolder);
+    accessProfile.driveAccounts=accessProfile.driveAccounts||{};
+    accessProfile.driveAccounts[salon]={connected:true,rootFolderId};
+    renderSettings();
+    toast(`Carpeta raíz de ${salon} guardada`);
+  }catch(err){
+    toast(err.message||"No se pudo guardar la carpeta raíz de Drive");
+  }finally{
+    if(btn)btn.disabled=false;
+  }
+}
+async function clearDrive(salon){
+  if(!confirm(`¿Desconectar la cuenta de Drive de ${salon}? Vas a tener que volver a conectarla y guardar la carpeta raíz para poder crear carpetas automáticamente.`))return;
+  const btn=document.querySelector(`[data-clear-drive="${CSS.escape(salon)}"]`);if(btn)btn.disabled=true;
+  try{
+    await clearDriveAccount(salon);
+    if(accessProfile.driveAccounts)delete accessProfile.driveAccounts[salon];
+    renderSettings();
+    toast(`Cuenta de Drive de ${salon} desconectada`);
+  }catch(err){
+    toast(err.message||"No se pudo desconectar la cuenta de Drive");
+  }finally{
+    if(btn)btn.disabled=false;
+  }
+}
+async function refreshDriveAccounts(){
+  try{
+    accessProfile.driveAccounts=await getMyDriveAccounts();
+    renderSettings();
+    toast("Estado de Drive actualizado");
+  }catch(err){
+    toast(err.message||"No se pudo actualizar el estado de Drive");
+  }
+}
+async function sendDriveEmail(id){
+  const client=state.clients.find(item=>item.id===id);if(!client)return;
+  const url=(client.driveUrl||"").trim(), email=(client.clientEmail||"").trim();
+  if(!url||!email){openClientForm(client);toast("Completá el email del cliente y el link de Drive para poder enviar el material.");return;}
+  if(!confirm(`¿Enviar el mail con el material a ${email}?`))return;
+  const btns=[...document.querySelectorAll(`[data-send-email="${id}"]`)];btns.forEach(b=>b.disabled=true);
+  try{
+    await sendDriveEmailNow(id);
+    client.linkSentAt=new Date().toISOString();
+    client.history=client.history||[];
+    client.history.push({date:client.linkSentAt,text:"Mail con material (Drive) enviado al cliente",type:"drive_email"});
+    saveState();
+    const detail=document.getElementById("detailDialog");if(detail?.open)openClientDetail(id);
+    toast(`Mail enviado. Disponible hasta el ${dateText(addDaysIso(isoDate(client.linkSentAt),180))}`);
+  }catch(err){
+    toast(err.message||"No se pudo enviar el mail");
+  }finally{
+    btns.forEach(b=>b.disabled=false);
+  }
+}
+function driveAutoAvailable(salon){
+  const acc=accessProfile.driveAccounts?.[salon];
+  return Boolean(acc?.connected&&acc?.rootFolderId);
+}
+async function createDriveFolder(id){
+  const client=state.clients.find(item=>item.id===id);if(!client)return;
+  if(!client.eventDate){toast("Cargá la fecha del evento antes de crear la carpeta.");return;}
+  const btns=[...document.querySelectorAll(`[data-create-drive-folder="${id}"]`)];btns.forEach(b=>b.disabled=true);
+  try{
+    const { driveUrl, warning } = await createDriveFolderNow(id);
+    client.driveUrl=driveUrl;
+    client.history=client.history||[];
+    client.history.push({date:new Date().toISOString(),text:"Carpeta de Drive creada automáticamente",type:"drive_folder_created"});
+    saveState();
+    const detail=document.getElementById("detailDialog");if(detail?.open)openClientDetail(id);
+    toast(warning||"Carpeta creada en Drive");
+  }catch(err){
+    toast(err.message||"No se pudo crear la carpeta en Drive");
+  }finally{
+    btns.forEach(b=>b.disabled=false);
+  }
+}
+function sessionDateTimeText(session){if(!session?.date||!session?.time)return "Sin agendar";return `${dateText(session.date)} · ${session.time}`;}
+// Formato casual para el speech de confirmación ("miércoles 5/08"), distinto
+// del formato formal dd/mm/aaaa que se usa en el resto de la app.
+function sessionSpeechDateText(session){
+  if(!session?.date) return "";
+  const d=parseDate(session.date);
+  const weekday=new Intl.DateTimeFormat("es-AR",{weekday:"long"}).format(d);
+  return `${weekday} ${d.getDate()}/${String(d.getMonth()+1).padStart(2,"0")}`;
+}
+// "15:00" → "15 hs" · "15:30" → "15:30 hs"
+function sessionSpeechTimeText(time){
+  if(!time) return "";
+  const [h,m]=time.split(":");
+  return (m&&m!=="00") ? `${Number(h)}:${m} hs` : `${Number(h)} hs`;
+}
+// Link de búsqueda de Google Maps para la ubicación de la sesión. No hace
+// falta guardar direcciones a mano: si es uno de los salones de Jano's,
+// Google ya lo tiene indexado como lugar con el prefijo "Jano's" (mismo
+// truco que usa la calculadora de viáticos en public/viaticos.html); si es
+// una ubicación cargada a mano (modo "Otro lugar" del picker de sesión), se
+// busca tal cual la escribiste.
+function sessionMapsUrl(session){
+  if(!session?.location) return "";
+  // Palacio Sans Souci no es un salón propio de Jano's (es una locación externa),
+  // así que buscarlo como "Jano's Sans Souci" en Maps devuelve un lugar equivocado.
+  // Usamos el link directo que confirmó Pablo en vez de armar una búsqueda.
+  if(session.location==="Sans Souci") return "https://maps.app.goo.gl/UHLRSXnCAbsFduSN6";
+  const query=SESSION_SALONS.includes(session.location) ? `Jano's ${session.location}, Argentina` : session.location;
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+}
+function photoSessionSummary(client){const session=client.photoSession;if(!session?.date)return "Sin sesión agendada";return `${sessionDateTimeText(session)} · ${session.location||client.salon}`;}
+// Silver no incluye sesión de fotos salvo que contrate "Sesión extra" (Mini Flex/Flex), Sans Souci, o sea Gold/VIP.
+function canScheduleSession(c) { return ["gold","vip"].includes(c.pack) || (c.addons||[]).includes("sansSouci") || normalizeFlexServices(c.flexServices).includes("extraSession"); }
+// Silver sin "Sesión extra" no tiene sesión de fotos incluida: no mostramos el botón.
+function photoSessionButtonHtml(c) { if (c.pack === "silver" && !canScheduleSession(c)) return ""; return `<button class="secondary-btn" data-photo-session="${c.id}">${c.photoSession?.date?"Reprogramar sesión":"Agendar sesión de fotos"}</button>`; }
+// Panel con los speeches de grupo aplicables a este cliente. "Coordinación
+// del book" solo aparece si tiene sesión de fotos habilitada; el resto
+// (por ahora solo "Presentación en el grupo") se muestra siempre.
+function speechPanelHtml(c) {
+  const applicable = SPEECH_TYPES.filter(s => s.condition(c));
+  if (!applicable.length) return "";
+  return `<div class="speech-panel"><div class="speech-panel-head"><h3>Mensajes para el grupo</h3><span class="muted">Copia el texto y abre el grupo de WhatsApp</span></div><div class="speech-buttons">${applicable.map(s => `<button class="secondary-btn" type="button" data-send-speech="${c.id}|${s.key}">${escapeHtml(s.label)}</button>`).join("")}</div></div>`;
+}
+function isSessionDayValid(y,m,d){const s=`${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;if(SESSION_HOLIDAYS.has(s))return false;return s>todayIso();}
+// Las sesiones EN SALON de Jano's solo se agendan lunes a jueves (el resto de
+// la semana el equipo suele estar cubriendo eventos). "Otro lugar" (turnos
+// civiles, citas externas, etc.) no tiene esa restriccion: el dia lo define
+// un tercero (el Registro Civil, por ejemplo), no la disponibilidad del
+// estudio. Por eso el calendario ya no filtra los dias por dia de semana
+// (ver isSessionDayValid arriba); el filtro de lunes-jueves se aplica recien
+// aca, sobre los salones propios, dejando "Otro lugar" siempre disponible.
+function isSalonSessionWeekday(dateStr){if(!dateStr)return true;const dow=parseDate(dateStr).getDay();return [1,2,3,4].includes(dow);}
+function sessionsOnDate(dateStr,excludeClientId){return state.clients.filter(c=>c.id!==excludeClientId&&c.photoSession?.date===dateStr).map(c=>({salon:c.photoSession.location,time:c.photoSession.time}));}
+function renderSessionCalendar(){const{y,m,date}=sessionPicker;const fd=new Date(y,m,1).getDay();const off=(fd+6)%7;const dim=new Date(y,m+1,0).getDate();let cells="";for(let i=0;i<off;i++)cells+=`<div class="cd"></div>`;for(let d=1;d<=dim;d++){const s=`${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`,ok=isSessionDayValid(y,m,d),sel=date===s,today=s===todayIso();cells+=`<div class="cd${ok?" av":""}${sel?" sel":""}${today?" today":""}" ${ok?`data-session-day="${s}"`:""}>${d}</div>`;}const monthLabel=new Intl.DateTimeFormat("es-AR",{month:"long",year:"numeric"}).format(new Date(y,m,1));return `<div class="cal-wrap"><div class="cal-top"><button type="button" class="cal-nav" data-session-cal-prev>&lsaquo;</button><div class="cal-mo">${monthLabel}</div><button type="button" class="cal-nav" data-session-cal-next>&rsaquo;</button></div><div class="cal-inner"><div class="cal-wds">${["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"].map(w=>`<div class="wd">${w}</div>`).join("")}</div><div class="cal-days-mini">${cells}</div></div></div>`;}
+function renderSessionSalons(){const{date,salon,clientId,customMode}=sessionPicker;const occupied=date?sessionsOnDate(date,clientId):[];const salonDelDia=occupied[0]?.salon||null;const salonDelDiaConocido=salonDelDia&&SESSION_SALONS.includes(salonDelDia);const diaHabilSalon=isSalonSessionWeekday(date);const chips=SESSION_SALONS.map(n=>{const esSalonDelDia=salonDelDia===n,bloqueado=!diaHabilSalon||(salonDelDia&&!esSalonDelDia),sel=!customMode&&salon===n;return `<div class="ssc${sel?" sel":""}${bloqueado?" bkd":""}" ${bloqueado?"":`data-session-salon="${n}"`}>${n}${esSalonDelDia?'<br><small style="color:var(--gold-2)">Tenés sesión agendada este día</small>':""}</div>`;}).join("");const customBloqueado=Boolean(salonDelDiaConocido);const customChip=`<div class="ssc ssc-custom${customMode?" sel":""}${customBloqueado?" bkd":""}" ${customBloqueado?"":"data-session-custom"}>&#9998; Otro lugar</div>`;const aviso=!diaHabilSalon?`<p class="session-hint">Este día no es hábil para sesiones en salón (solo lunes a jueves) — elegí "Otro lugar" para citas externas, como un turno civil.</p>`:(salonDelDia&&!salonDelDiaConocido)?`<p class="session-hint">Ya hay una sesión ese día en "${escapeHtml(salonDelDia)}". Elegí "Otro lugar" para sumarte ahí.</p>`:"";const campoManual=customMode?`<label class="fl" style="margin-top:10px">Lugar<input type="text" id="sessionCustomLocation" placeholder="Dirección o nombre del lugar" maxlength="120" value="${escapeHtml(SESSION_SALONS.includes(salon)?"":salon)}"></label>`:"";return `<div class="session-salon-grid">${chips}${customChip}</div>${aviso}${campoManual}`;}
+function renderSessionSlots(){const{date,salon,time,clientId,customTimeMode}=sessionPicker;const occupied=(date&&salon)?sessionsOnDate(date,clientId).filter(s=>s.salon===salon).map(s=>s.time):[];const chips=SESSION_SLOTS.map(s=>{const bkd=occupied.includes(s),sel=!customTimeMode&&time===s;return `<div class="ssl${bkd?" bkd":""}${sel?" sel":""}" ${bkd?"":`data-session-slot="${s}"`}><div class="ssl-t">${s}</div><div class="ssl-s ${bkd?"bkd":sel?"sel":"ok"}">${bkd?"Ocupado":sel?"✓ Elegido":"Libre"}</div></div>`;}).join("");const customChip=`<div class="ssl ssl-custom${customTimeMode?" sel":""}" data-session-time-custom><div class="ssl-t" style="font-size:13px">&#9998;</div><div class="ssl-s ${customTimeMode?"sel":"ok"}">Otro horario</div></div>`;const campoManual=customTimeMode?`<label class="fl" style="margin-top:10px">Hora<input type="time" id="sessionCustomTime" value="${SESSION_SLOTS.includes(time)?"":time}"></label>`:"";return `<div class="session-slot-grid">${chips}${customChip}</div>${campoManual}`;}
+function syncSessionFormFields(){const form=document.getElementById("photoSessionForm");form.elements.date.value=sessionPicker.date;form.elements.location.value=sessionPicker.salon;form.elements.time.value=sessionPicker.time;const btn=document.getElementById("saveSessionBtn");if(btn)btn.disabled=!(sessionPicker.date&&sessionPicker.salon&&sessionPicker.time);}
+function updateSessionDerived(){document.getElementById("sessionSlotGrid").innerHTML=(sessionPicker.date&&sessionPicker.salon)?renderSessionSlots():`<p class="session-hint">Elegí un salón primero.</p>`;if(sessionPicker.customTimeMode)document.getElementById("sessionCustomTime")?.focus();syncSessionFormFields();}
+function renderSessionPicker(){document.getElementById("sessionCalendar").innerHTML=renderSessionCalendar();document.getElementById("sessionSalonGrid").innerHTML=sessionPicker.date?renderSessionSalons():`<p class="session-hint">Elegí un día primero.</p>`;if(sessionPicker.customMode)document.getElementById("sessionCustomLocation")?.focus();updateSessionDerived();}
+// Mismo patrón que clientFormReopenDetailId (ver openClientForm): si este
+// diálogo se abrió desde la ficha principal (que se cierra al abrirlo),
+// guardamos a quién volver a abrir cuando se cierre, sea guardando o cancelando.
+let photoSessionReopenDetailId = null;
+function openPhotoSessionForm(clientId, reopenDetailId=null){photoSessionReopenDetailId=reopenDetailId; const client=state.clients.find(item=>item.id===clientId);if(!client)return;const form=document.getElementById("photoSessionForm"),session=client.photoSession||{};form.reset();form.elements.clientId.value=client.id;form.elements.team.value=session.team||"";form.elements.includesFashionProduction.checked=Boolean(session.includesFashionProduction);form.elements.includesMakeupHair.checked=Boolean(session.includesMakeupHair);form.elements.notes.value=session.notes||"";const base=session.date?parseDate(session.date):new Date();sessionPicker={clientId:client.id,y:base.getFullYear(),m:base.getMonth(),date:session.date||"",salon:session.location||"",time:session.time||"",customMode:Boolean(session.location)&&!SESSION_SALONS.includes(session.location),customTimeMode:Boolean(session.time)&&!SESSION_SLOTS.includes(session.time)};renderSessionPicker();document.getElementById("photoSessionDialog").showModal();}
+function calendarDatePart(date,time){return `${date.replaceAll("-","")}T${time.replace(":","")}00`;}
+function addMinutesToTime(date,time,minutes){const value=new Date(`${date}T${time}:00`);value.setMinutes(value.getMinutes()+Number(minutes||90));return {date:`${value.getFullYear()}-${String(value.getMonth()+1).padStart(2,"0")}-${String(value.getDate()).padStart(2,"0")}`,time:`${String(value.getHours()).padStart(2,"0")}:${String(value.getMinutes()).padStart(2,"0")}`};}
+function googleCalendarUrl(client,session){const end=addMinutesToTime(session.date,session.time,90);const optional=[session.includesFashionProduction?"Incluye producción de moda":"",session.includesMakeupHair?"Incluye maquillaje y peinado":""].filter(Boolean);const details=[`Cliente: ${client.clientName||client.honoree}`,`Evento: #${client.code} · ${client.honoree}`,`Fecha del evento: ${dateText(client.eventDate)}`,optional.length?`Opcionales: ${optional.join(" · ")}`:"",session.notes?`Notas: ${session.notes}`:""].filter(Boolean).join("\n");const params=new URLSearchParams({action:"TEMPLATE",text:`#${client.code} Book ${client.honoree} · ${session.location} · ${session.time}`,dates:`${calendarDatePart(session.date,session.time)}/${calendarDatePart(end.date,end.time)}`,details,location:session.location,ctz:"America/Argentina/Buenos_Aires"});return `https://calendar.google.com/calendar/render?${params.toString()}`;}
+function savePhotoSession(form){const data=Object.fromEntries(new FormData(form)),client=state.clients.find(item=>item.id===data.clientId);if(!client)return false;const session={date:data.date,time:data.time,location:data.location.trim(),team:String(data.team||"").trim(),includesFashionProduction:form.elements.includesFashionProduction.checked,includesMakeupHair:form.elements.includesMakeupHair.checked,notes:String(data.notes||"").trim(),updatedAt:new Date().toISOString()};if(!session.date||!session.time||!session.location){toast("Completá día, hora y lugar de la sesión.");return false;}
+  // Google Calendar es de solo lectura para la app (ver README): este botón solo
+  // abre un evento NUEVO precargado, no edita ni borra el que ya existía. Si es
+  // una reprogramación (ya había fecha antes), avisamos para que no quede
+  // duplicado en Calendar.
+  const previous=client.photoSession;
+  const isReschedule=Boolean(previous?.date)&&(previous.date!==session.date||previous.time!==session.time||previous.location!==session.location);
+  client.photoSession=session;client.history=client.history||[];client.history.push({date:session.updatedAt,text:`Sesión de fotos agendada para ${sessionDateTimeText(session)} en ${session.location}`,type:"photo_session",photoSession:session});const _coordTask=client.tasks.find(t=>t.key==="coordinateSession");if(_coordTask&&_coordTask.status!=="done"){_coordTask.status="done";_coordTask.completedAt=session.date||todayIso();}syncTasks(client);saveState();window.open(googleCalendarUrl(client,session),"janosExternal","noopener,noreferrer");
+  const savedMsg=session.includesFashionProduction?"Sesión guardada, Google Calendar abierto y adicional de Moda agregado a rendir":"Sesión guardada y Google Calendar abierto";
+  if(isReschedule)toast(`${savedMsg}. Se abrió como evento nuevo: borrá el anterior en Calendar a mano.`,4500);else toast(savedMsg);
+  return true;}
+function clientCards(clients) { return clients.length ? [...clients].sort((a,b)=>clientViewMode==="archived"?parseDate(b.eventDate)-parseDate(a.eventDate):parseDate(a.eventDate)-parseDate(b.eventDate)).map(c => `<article class="client-card ${isPastEvent(c)?"archived-card":""}"><div class="client-card-top"><span class="tag${c.isExternal?" external":""}">${c.isExternal?"Externo":isPastEvent(c)?"Realizado":packLabel(c.pack)}</span><span class="muted">${dateText(c.eventDate)}</span></div><h3>${escapeHtml(c.honoree)}</h3><p>#${escapeHtml(c.code)} · ${escapeHtml(c.salon)} · ${escapeHtml(c.type)}</p><div class="session-note-row"><div class="session-note ${c.photoSession?.date?"scheduled":""}">${c.photoSession?.date?(isPastSession(c.photoSession)?"Sesión realizada: ":"Sesión programada: "):""}${escapeHtml(photoSessionSummary(c))}</div>${c.linkSentAt?`<div class="session-note scheduled">Material enviado ${dateText(isoDate(c.linkSentAt))}</div>`:""}</div><div class="progress-line"><i style="width:${progress(c)}%"></i></div><div class="card-meta"><span>${progress(c)}% completo</span><span>${c.tasks.filter(t=>t.status==="pending").length} pendientes</span></div><div class="card-actions"><button class="whatsapp-btn ${!c.clientPhone?"missing":c.contactedAt?"contacted":""}" type="button" data-contact-client="${c.id}">${!c.clientPhone?"Agregar WhatsApp":c.contactedAt?`<span>Contactado</span><small>${dateText(isoDate(c.contactedAt))}</small>`:"Contactar"}</button><button class="whatsapp-btn ${!c.whatsappGroupUrl?"missing":""}" type="button" data-whatsapp-group="${c.id}">${c.whatsappGroupUrl?"Grupo WhatsApp":"Agregar grupo"}</button>${photoSessionButtonHtml(c)}<button class="secondary-btn" data-open-client="${c.id}">Ver tareas</button><button class="ghost-btn" data-edit-client="${c.id}">Editar</button></div></article>`).join("") : empty(clientViewMode==="archived"?"Todavía no hay eventos realizados":"No hay eventos para estos filtros", clientViewMode==="archived"?"Cuando pase la fecha, aparecerán automáticamente aquí.":"Probá otro salón, mes o criterio de búsqueda."); }
+function progress(c) { const applicable=c.tasks.filter(t=>t.status!=="na"); return applicable.length ? Math.round(applicable.filter(t=>t.status==="done").length/applicable.length*100) : 0; }
+function empty(title, text) { return `<div class="empty"><strong>${title}</strong>${text}</div>`; }
+
+function matchesTaskSearch(c, q) { if (!q) return true; const text = q.toLowerCase().trim(); return [String(c.code || ""), String(c.honoree || ""), String(c.clientName || ""), dateText(c.eventDate), String(c.eventDate || "")].some(v => v.toLowerCase().includes(text)); }
+function globalTaskItems(salon = "", search = "") { return state.clients.filter(c => !isPastEvent(c) && (!salon || c.salon === salon) && matchesTaskSearch(c, search)).flatMap(c => c.tasks.filter(t => !["done", "na"].includes(t.status)).map(t => ({ c, t }))); }
+function filterByRole(items, role) { return role === "todos" ? items : items.filter(({ t }) => { const r = taskRole(t.key); return r === "ambos" || r === role; }); }
+function setTaskRoleFilter(role) { taskRoleFilter = role; localStorage.setItem("janosTaskRole", role); renderTasks(); }
+function setTaskSalonFilter(salon) { taskSalonFilter = salon; localStorage.setItem("janosTaskSalon", salon); renderTasks(); }
+function taskViewData() {
+  const all = globalTaskItems(taskSalonFilter, taskSearchFilter);
+  const fotoCount = filterByRole(all, "foto").length, videoCount = filterByRole(all, "video").length, todosCount = all.length;
+  const items = filterByRole(all, taskRoleFilter).sort((a, b) => daysUntil(a.c.eventDate) - daysUntil(b.c.eventDate));
+  const groups = [];
+  items.forEach(({ c, t }) => { let g = groups.find(x => x.c.id === c.id); if (!g) { g = { c, tasks: [] }; groups.push(g); } g.tasks.push(t); });
+  const body = groups.length ? groups.map(g => `<div class="panel task-group"><div class="panel-head"><div><h3>${escapeHtml(g.c.honoree)}</h3><span class="muted">#${escapeHtml(g.c.code)} · ${dateText(g.c.eventDate)} · ${escapeHtml(g.c.salon)}</span></div><button class="ghost-btn" data-open-client="${g.c.id}">Ver ficha</button></div><div class="panel-body">${g.tasks.map(t => taskRow(g.c, t)).join("")}</div></div>`).join("") : empty("Sin tareas pendientes", "No hay tareas pendientes para este filtro.");
+  return { fotoCount, videoCount, todosCount, body };
+}
+function filterTasks() {
+  taskSearchFilter = document.getElementById("taskSearch")?.value || "";
+  const { fotoCount, videoCount, todosCount, body } = taskViewData();
+  const groupsEl = document.getElementById("taskGroups"); if (groupsEl) groupsEl.innerHTML = body;
+  const tb = document.getElementById("taskCountTodos"); if (tb) tb.textContent = todosCount;
+  const fb = document.getElementById("taskCountFoto"); if (fb) fb.textContent = fotoCount;
+  const vb = document.getElementById("taskCountVideo"); if (vb) vb.textContent = videoCount;
+}
+function renderTasks() {
+  const view = document.getElementById("tasksView"); if (!view) return;
+  const salons = salonsInUse();
+  const { fotoCount, videoCount, todosCount, body } = taskViewData();
+  view.innerHTML = `<div class="rendition-controls"><div class="view-switch" aria-label="Filtrar tareas por rol"><button class="${taskRoleFilter === "todos" ? "active" : ""}" data-task-role="todos">Todos <b id="taskCountTodos">${todosCount}</b></button><button class="${taskRoleFilter === "foto" ? "active" : ""}" data-task-role="foto">📷 Fotógrafo <b id="taskCountFoto">${fotoCount}</b></button><button class="${taskRoleFilter === "video" ? "active" : ""}" data-task-role="video">🎥 Videógrafo <b id="taskCountVideo">${videoCount}</b></button></div><input id="taskSearch" placeholder="Buscar por código o fecha" value="${escapeHtml(taskSearchFilter)}"><select id="taskSalonFilter" aria-label="Filtrar por salón"><option value="">Todos los salones</option>${salons.map(s => `<option value="${escapeHtml(s)}" ${taskSalonFilter === s ? "selected" : ""}>${escapeHtml(s)}</option>`).join("")}</select></div><div id="taskGroups" class="task-groups">${body}</div>`;
+}
+
+let renditionCategoryFilter = "";
+let renditionStatusFilter = "";
+let renditionSalonFilter = "";
+let renditionRoleFilter = localStorage.getItem("janosRenditionRole") || "todos";
+let selectedRenditionIds = new Set();
+let highlightedRenditionId = null; // fila resaltada al hacer clic, para guiar la vista al comparar con el sitio externo
+// Rendiciones ligadas a tarea toman el salón del cliente; las manuales tienen su propio campo "salon".
+function renditionSalon(r) { if (r.isManual) return r.salon || ""; const c = state.clients.find(x => x.id === r.clientId); return c?.salon || ""; }
+function renditionEventDate(r) { if (r.isManual) return r.eventDate || r.workDate; const c = state.clients.find(x => x.id === r.clientId); return c?.eventDate || r.workDate; }
+// Rol (foto/video/ambos) de una rendición, para poder separar el trabajo del fotógrafo del trabajo del
+// videógrafo en la pantalla de Rendiciones (antes solo existía este filtro en la pantalla de Tareas).
+// PERSONAL/GUARDIA FOTOGRAFIA|VIDEO ya son inequívocas por categoría. COMPLEMENTOS es la categoría mezclada:
+// para una rendición ligada a una tarea se prioriza TASK_ROLES (más específico, cubre casos donde el texto
+// del trabajo no coincide exactamente con el catálogo); si no hay tarea o no está en TASK_ROLES, se usa el
+// rol cargado en MANUAL_WORKS para ese trabajo puntual (así también cubre las rendiciones manuales).
+function workRole(category, work) {
+  if (category === "PERSONAL FOTOGRAFIA" || category === "GUARDIA FOTO" || category === "GUARDIA FOTOGRAFIA") return "foto";
+  if (category === "PERSONAL VIDEO" || category === "GUARDIA VIDEO") return "video";
+  const entry = (MANUAL_WORKS[category] || []).find(w => w.label === work);
+  return entry?.role || "ambos";
+}
+function renditionRole(r) {
+  if (r.taskId) {
+    const c = state.clients.find(x => x.id === r.clientId);
+    const t = c?.tasks.find(x => x.id === r.taskId);
+    if (t?.key && TASK_ROLES[t.key]) return TASK_ROLES[t.key];
+  }
+  return workRole(r.category, r.work);
+}
+function matchesRoleFilter(r, role) { return role === "todos" || renditionRole(r) === "ambos" || renditionRole(r) === role; }
+const ROLE_BADGE = { foto: " 📷", video: " 🎥" };
+function renderRenditions() {
+  const activeCount=state.renditions.filter(r=>!r.archivedAt).length,archivedCount=state.renditions.length-activeCount;
+  const roleBase=state.renditions.filter(r=>renditionViewMode==="archived"?Boolean(r.archivedAt):!r.archivedAt);
+  const roleTodosCount=roleBase.length,roleFotoCount=roleBase.filter(r=>matchesRoleFilter(r,"foto")).length,roleVideoCount=roleBase.filter(r=>matchesRoleFilter(r,"video")).length;
+  const rows=roleBase.filter(r=>matchesRoleFilter(r,renditionRoleFilter)).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+  const categories=["PERSONAL FOTOGRAFIA","PERSONAL VIDEO","COMPLEMENTOS","GUARDIA FOTO","GUARDIA VIDEO"];
+  const categorySummary=categories.map(cat=>{const total=rows.filter(r=>r.category===cat).reduce((s,r)=>s+Number(r.amount||0),0);return total>0?`<div class="category-kpi"><span>${cat}</span><strong>${money(total)}</strong></div>`:""}).join("");
+  const salons=salonsInUse();
+  document.getElementById("renditionsView").innerHTML = `<div class="rendition-controls"><div class="view-switch" aria-label="Archivo de rendiciones"><button class="${renditionViewMode==="active"?"active":""}" data-rendition-view="active">Activas <b>${activeCount}</b></button><button class="${renditionViewMode==="archived"?"active":""}" data-rendition-view="archived">Archivadas <b>${archivedCount}</b></button></div><div class="view-switch" aria-label="Separar por rol"><button class="${renditionRoleFilter==="todos"?"active":""}" data-rendition-role="todos">Todos <b>${roleTodosCount}</b></button><button class="${renditionRoleFilter==="foto"?"active":""}" data-rendition-role="foto">📷 Fotógrafo <b>${roleFotoCount}</b></button><button class="${renditionRoleFilter==="video"?"active":""}" data-rendition-role="video">🎥 Videógrafo <b>${roleVideoCount}</b></button></div><select id="renditionCategoryFilter"><option value="">Todas las categorías</option>${categories.map(c=>`<option value="${c}">${c}</option>`).join("")}</select><select id="renditionSalonFilter" aria-label="Filtrar por salón"><option value="">Todos los salones</option>${salons.map(s=>`<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("")}</select><select id="renditionFilter"><option value="">Todos los estados</option>${Object.entries(RENDITION_STATUS).map(([k,v])=>`<option value="${k}">${v}</option>`).join("")}</select><button class="secondary-btn" id="exportRenditionsCsv" title="Exporta las rendiciones pendientes en el formato que usa el script de carga automática">Exportar CSV</button><button class="secondary-btn" id="exportRenditionsXlsx" title="Exporta a Excel las rendiciones visibles con la vista y filtros actuales">Exportar Excel</button></div>${categorySummary?`<div class="category-summary">${categorySummary}</div>`:""}<div id="renditionBulkBar" class="rendition-bulk-bar"></div><div class="rendition-total" aria-live="polite"><div><span>Total a cobrar</span><small id="renditionTotalCount">${renditionCountLabel(rows.length)}</small></div><strong id="renditionTotalAmount">${money(renditionTotal(rows))}</strong></div><div class="panel"><div class="rendition-row header"><span class="rendition-select-cell"><input type="checkbox" id="renditionSelectAll" aria-label="Seleccionar todas"> Trabajo</span><span>Evento</span><span>Categoría</span><span>Importe</span><span>Estado</span><span>Acciones</span></div><div id="renditionRows">${renditionRows(rows)}</div></div>`;
+  const cf=document.getElementById("renditionCategoryFilter");if(cf)cf.value=renditionCategoryFilter;
+  const sf=document.getElementById("renditionSalonFilter");if(sf)sf.value=renditionSalonFilter;
+  const rf=document.getElementById("renditionFilter");if(rf)rf.value=renditionStatusFilter;
+  updateRenditionBulkBar(rows);
+  if(renditionCategoryFilter||renditionStatusFilter||renditionSalonFilter)filterRenditions();
+}
+function renditionTotal(rows){return rows.reduce((total,item)=>total+Number(item.amount||0),0);}
+function renditionCountLabel(count){return `${count} ${count===1?"trabajo visible":"trabajos visibles"}`;}
+function updateRenditionTotal(rows){const amount=document.getElementById("renditionTotalAmount"),count=document.getElementById("renditionTotalCount");if(amount)amount.textContent=money(renditionTotal(rows));if(count)count.textContent=renditionCountLabel(rows.length);}
+function updateRenditionBulkBar(rows){
+  const bar=document.getElementById("renditionBulkBar");
+  const n=selectedRenditionIds.size;
+  const primaryBtn=renditionViewMode==="archived"?`<button class="small-btn" id="renditionBulkRestore">Restaurar seleccionadas</button>`:`<button class="small-btn" id="renditionBulkArchive">Archivar seleccionadas</button>`;
+  if(bar)bar.innerHTML=n?`<span>${n} seleccionada${n===1?"":"s"}</span><div class="rendition-bulk-actions">${primaryBtn}<button class="small-btn danger" id="renditionBulkDelete">Eliminar seleccionadas</button><button class="small-btn" id="renditionBulkClear">Cancelar selección</button></div>`:"";
+  if(bar)bar.classList.toggle("show",n>0);
+  const selectAll=document.getElementById("renditionSelectAll");
+  if(selectAll){
+    const visibleIds=rows.map(r=>r.id);
+    const allSelected=visibleIds.length>0&&visibleIds.every(id=>selectedRenditionIds.has(id));
+    selectAll.checked=allSelected;
+    selectAll.indeterminate=!allSelected&&visibleIds.some(id=>selectedRenditionIds.has(id));
+  }
+}
+function currentRenditionRows(){return state.renditions.filter(r=>(renditionViewMode==="archived"?Boolean(r.archivedAt):!r.archivedAt)&&matchesRoleFilter(r,renditionRoleFilter)&&(!renditionStatusFilter||r.status===renditionStatusFilter)&&(!renditionCategoryFilter||r.category===renditionCategoryFilter)&&(!renditionSalonFilter||renditionSalon(r)===renditionSalonFilter)).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));}
+function toggleRenditionSelect(id,checked){if(checked)selectedRenditionIds.add(id);else selectedRenditionIds.delete(id);const rows=currentRenditionRows();updateRenditionTotal(rows);updateRenditionBulkBar(rows);}
+function toggleRenditionSelectAll(checked){const rows=currentRenditionRows();rows.forEach(r=>checked?selectedRenditionIds.add(r.id):selectedRenditionIds.delete(r.id));document.getElementById("renditionRows").innerHTML=renditionRows(rows);updateRenditionBulkBar(rows);}
+function bulkArchiveRenditions(){
+  const items=[...selectedRenditionIds].map(id=>state.renditions.find(r=>r.id===id)).filter(Boolean);
+  const archivable=items.filter(r=>r.status!=="pending"&&!r.archivedAt);
+  const skipped=items.length-archivable.length;
+  if(!archivable.length){toast("Ninguna de las seleccionadas se puede archivar (primero hay que rendirlas).");return;}
+  if(!confirm(`¿Archivar ${archivable.length} rendición${archivable.length===1?"":"es"}?${skipped?` (${skipped} no se archivan por estar pendientes)`:""}`))return;
+  archivable.forEach(item=>{item.archivedAt=new Date().toISOString();logRenditionArchive(item,true);});
+  selectedRenditionIds.clear();
+  saveState();
+  toast(`${archivable.length} rendición${archivable.length===1?"":"es"} archivada${archivable.length===1?"":"s"}`);
+}
+function bulkRestoreRenditions(){
+  const items=[...selectedRenditionIds].map(id=>state.renditions.find(r=>r.id===id)).filter(Boolean);
+  const restorable=items.filter(r=>r.archivedAt);
+  if(!restorable.length){toast("Ninguna de las seleccionadas está archivada.");return;}
+  if(!confirm(`¿Restaurar ${restorable.length} rendición${restorable.length===1?"":"es"}?`))return;
+  restorable.forEach(item=>{item.archivedAt="";logRenditionArchive(item,false);});
+  selectedRenditionIds.clear();
+  saveState();
+  toast(`${restorable.length} rendición${restorable.length===1?"":"es"} restaurada${restorable.length===1?"":"s"}`);
+}
+function bulkDeleteRenditions(){
+  const ids=[...selectedRenditionIds];
+  if(!ids.length)return;
+  if(!confirm(`¿Eliminar definitivamente ${ids.length} rendición${ids.length===1?"":"es"}? Las tareas de los clientes se conservan.`))return;
+  ids.forEach(id=>{const item=state.renditions.find(r=>r.id===id);if(!item)return;const client=state.clients.find(c=>c.id===item.clientId);if(client){client.history=client.history||[];client.history.push({date:new Date().toISOString(),text:`Rendición eliminada: ${item.work}`,type:"rendition_delete",renditionId:item.id});}});
+  state.renditions=state.renditions.filter(r=>!ids.includes(r.id));
+  selectedRenditionIds.clear();
+  saveState();
+  toast(`${ids.length} rendición${ids.length===1?"":"es"} eliminada${ids.length===1?"":"s"}`);
+}
+function renditionRows(rows) { return rows.length ? rows.map(r=>{const c=state.clients.find(x=>x.id===r.clientId),processed=r.status!=="pending",roleBadge=ROLE_BADGE[renditionRole(r)]||"";const actions=r.archivedAt?`<button class="small-btn" data-restore-rendition="${r.id}">Restaurar</button><button class="small-btn danger" data-delete-rendition="${r.id}">Eliminar</button>`:processed?`<button class="small-btn" data-archive-rendition="${r.id}">Archivar</button><button class="small-btn danger" data-delete-rendition="${r.id}">Eliminar</button>`:`<span class="muted">Rendila para archivar</span>`; return `<div class="rendition-row ${selectedRenditionIds.has(r.id)?"selected":""}${highlightedRenditionId===r.id?" row-highlight":""}" data-rendition-row="${r.id}"><div class="rendition-work-cell"><input type="checkbox" class="rendition-check" data-rendition-select="${r.id}" ${selectedRenditionIds.has(r.id)?"checked":""} aria-label="Seleccionar"><div><strong>${escapeHtml(r.work)}</strong><small>${escapeHtml(r.isManual?(r.salon||"Sin salón"):(c?`#${c.code} · ${c.honoree} · ${c.salon||"Sin salón"}`:"Cliente eliminado"))} · realizado ${r.workDate?dateText(r.workDate):"sin fecha"}</small></div></div><span>${r.isManual?dateText(r.eventDate):(c?dateText(c.eventDate):"-")}</span><span class="muted">${escapeHtml(r.category)}${roleBadge}<br><small>Cierre ${r.periodEnd?dateText(r.periodEnd):"-"}</small></span><span class="money">${money(r.amount)}</span><select data-rendition-status="${r.id}" ${r.archivedAt?"disabled title=\"Restaurá la rendición para cambiar su estado\"":""}>${Object.entries(RENDITION_STATUS).map(([k,v])=>`<option value="${k}" ${r.status===k?"selected":""}>${v}</option>`).join("")}</select><div class="rendition-actions">${actions}</div></div>`;}).join("") : empty(renditionViewMode==="archived"?"No hay rendiciones archivadas":"Sin rendiciones activas", renditionViewMode==="archived"?"Las rendiciones que archives aparecerán aquí.":"Al completar un trabajo remunerado aparecerá aquí."); }
+
+function logRenditionArchive(item, archived){const client=state.clients.find(c=>c.id===item.clientId);if(!client)return;client.history=client.history||[];client.history.push({date:new Date().toISOString(),text:`Rendición ${archived?"archivada":"restaurada"}: ${item.work}`,type:"rendition_archive",renditionId:item.id,archived});}
+function archiveRendition(id){const item=state.renditions.find(r=>r.id===id);if(!item)return;if(item.status==="pending"){toast("Primero marcá la rendición como rendida.");return;}item.archivedAt=new Date().toISOString();logRenditionArchive(item,true);saveState();toast("Rendición archivada");}
+function restoreRendition(id){const item=state.renditions.find(r=>r.id===id);if(!item)return;item.archivedAt="";logRenditionArchive(item,false);saveState();toast("Rendición restaurada");}
+function deleteRendition(id){const item=state.renditions.find(r=>r.id===id);if(!item)return;const client=state.clients.find(c=>c.id===item.clientId);if(client){client.history=client.history||[];client.history.push({date:new Date().toISOString(),text:`Rendición eliminada: ${item.work}`,type:"rendition_delete",renditionId:item.id});}state.renditions=state.renditions.filter(r=>r.id!==id);saveState();toast("Rendición eliminada");}
+
+function zohoAccountsPanelBody(){
+  const mySalons=(accessProfile.salons&&accessProfile.salons.length)?accessProfile.salons:salonsInUse();
+  if(!mySalons.length)return `<p class="muted">Todavía no hay salones para configurar. Cuando tengas clientes cargados o salones asignados a tu cuenta, vas a poder cargar acá tu cuenta de Zoho para cada uno.</p>`;
+  const accounts=accessProfile.zohoAccounts||{};
+  const isAdmin=accessProfile.role==="admin";
+  const fallbackNote=isAdmin?"Si no cargás nada, se usa la cuenta general del salón (la que ya tenés configurada).":"Si no cargás tu cuenta acá, no vas a poder enviar material — tenés que cargar la tuya.";
+  const zohoHelp=`<details class="zoho-help"><summary>Cómo generar tu contraseña de Zoho para Janos Control</summary>
+    <p>Para que Janos Control pueda enviar el material a los clientes desde tu propia casilla de Zoho, necesitás cargar tu email y una contraseña de Zoho.</p>
+    <p><strong>Primero probá con tu contraseña normal de Zoho</strong> (la que usás siempre para entrar a tu correo). Si al guardar la cuenta la app te avisa que Zoho rechazó la conexión, es porque tenés activada la verificación en dos pasos — en ese caso necesitás generar una <strong>contraseña de aplicación</strong>: una clave especial, distinta a la de siempre, que se usa solo para esto. Seguí estos pasos:</p>
+    <h5>Pasos a seguir</h5>
+    <ol>
+      <li>Entrá a esta dirección con tu cuenta de Zoho: <a href="https://accounts.zoho.com/home#security/app-passwords" target="_blank" rel="noopener noreferrer">accounts.zoho.com/home#security/app-passwords</a></li>
+      <li>Si te pide confirmar tu contraseña ("Confirme su identidad"), escribila y confirmá. Es un paso normal de seguridad de Zoho.</li>
+      <li>Vas a ver la sección "Contraseñas específicas de aplicación". Hacé clic en "+ Generar nueva contraseña".</li>
+      <li>Escribí un nombre para identificarla, por ejemplo: Janos Control.</li>
+      <li><strong>Importante:</strong> Zoho te va a mostrar la contraseña generada UNA SOLA VEZ, en ese momento. Copiala enseguida (o anotala) antes de cerrar esa ventana. Si la cerrás sin copiarla, no hay forma de volver a verla — vas a tener que generar una nueva.</li>
+      <li>Andá a Janos Control → Ajustes → "Mi cuenta de email (Zoho)". Buscá el bloque correspondiente a tu salón.</li>
+      <li>Completá los 3 campos de ese salón:
+        <ul>
+          <li>Email de Zoho: tu email real de Zoho (el de siempre).</li>
+          <li>Contraseña de aplicación: la que acabás de copiar (NO tu contraseña real).</li>
+          <li>Nombre que va a ver el cliente: tu nombre o el de tu estudio, como querés que aparezca en el mail.</li>
+        </ul>
+      </li>
+      <li>Apretá "Guardar cuenta de [tu salón]". La app va a probar la conexión con Zoho automáticamente y te va a avisar si está todo bien o si hay que revisar algo.</li>
+    </ol>
+    <h5>Si trabajás en más de un salón</h5>
+    <p>Repetí este proceso para cada salón en el que trabajes: cada uno tiene su propio bloque en Ajustes, con su propio email y contraseña. Así, cuando envíes material a un cliente, la app usa automáticamente la cuenta correcta según el salón de ese cliente.</p>
+    <h5>Si te equivocaste o necesitás generar otra</h5>
+    <p>Podés volver a la misma página de Zoho, borrar ("Suprimir") la contraseña vieja que no sirve, y generar una nueva siguiendo los mismos pasos.</p>
+  </details>`;
+  return `<p class="muted">Acá cargás la cuenta de Zoho para mandarle el material a tus clientes. ${fallbackNote}</p>${zohoHelp}${mySalons.map(salon=>{
+    const slug=salonSlug(salon),acc=accounts[salon]||{};
+    return `<div class="zoho-account-block"><h4>${escapeHtml(salon)}</h4><label>Email de Zoho<input id="zohoEmail-${slug}" type="email" placeholder="tuemail@janoseventos.com" value="${escapeHtml(acc.email||"")}"></label><label>Contraseña de aplicación<div class="password-field"><input id="zohoAppPassword-${slug}" type="password" placeholder="${acc.hasPassword?"Ya cargada · dejalo vacío para no cambiarla":"Contraseña de aplicación de Zoho"}" autocomplete="new-password"><button type="button" class="icon-btn toggle-password" data-toggle-password="zohoAppPassword-${slug}" aria-label="Mostrar contraseña">👁</button></div></label><label>Nombre que va a ver el cliente<input id="zohoFromName-${slug}" type="text" placeholder="Ej: Juan Pérez Fotografía" value="${escapeHtml(acc.fromName||"")}"></label><div class="modal-actions"><button class="primary-btn" data-save-zoho="${escapeHtml(salon)}">Guardar cuenta de ${escapeHtml(salon)}</button>${acc.email||acc.hasPassword?`<button class="danger-btn" data-clear-zoho="${escapeHtml(salon)}">Borrar cuenta de ${escapeHtml(salon)}</button>`:""}</div></div>`;
+  }).join("")}`;
+}
+function driveAccountsPanelBody(){
+  const mySalons=(accessProfile.salons&&accessProfile.salons.length)?accessProfile.salons:salonsInUse();
+  if(!mySalons.length)return `<p class="muted">Todavía no hay salones para configurar. Cuando tengas clientes cargados o salones asignados a tu cuenta, vas a poder conectar acá tu cuenta de Drive para cada uno.</p>`;
+  const accounts=accessProfile.driveAccounts||{};
+  const driveHelp=`<details class="zoho-help"><summary>Cómo conectar tu Drive para crear carpetas automáticamente</summary>
+    <p>Conectando tu cuenta de Google Drive acá, Janos Control puede crear la carpeta de cada cliente automáticamente dentro de tu Drive.</p>
+    <h5>Pasos a seguir</h5>
+    <ol>
+      <li>Apretá "Conectar cuenta de Drive" en el bloque de tu salón. Se abre una pestaña nueva de Google.</li>
+      <li>Iniciá sesión con la cuenta de Google que corresponde a ese salón y aceptá los permisos que pide la app.</li>
+      <li>Cuando la pestaña te confirme "Cuenta conectada", cerrala y volvé acá.</li>
+      <li>En Drive, entrá a esa cuenta y ubicá (o creá) la carpeta que va a ser la raíz donde se guardan las carpetas de los clientes (por ejemplo, la carpeta del año en curso). Copiá el link para compartir de esa carpeta.</li>
+      <li>Pegalo en el campo "Carpeta raíz en Drive" de acá abajo y apretá "Guardar carpeta".</li>
+    </ol>
+    <p>Listo: a partir de ahí, "Crear carpeta en Drive" en la ficha de cada cliente de ese salón va a crear la carpeta sola, dentro de esa cuenta.</p>
+  </details>`;
+  return `<p class="muted">Conectá tu cuenta de Google Drive para que la app cree sola la carpeta de cada cliente de tu salón. Si no la conectás, podés seguir pegando el link de Drive a mano en cada cliente.</p><div class="modal-actions"><button class="secondary-btn" type="button" id="refreshDriveAccounts">↻ Actualizar estado</button></div>${driveHelp}${mySalons.map(salon=>{
+    const slug=salonSlug(salon),acc=accounts[salon]||{};
+    return `<div class="zoho-account-block"><h4>${escapeHtml(salon)}</h4><p class="muted">${acc.connected?"Cuenta de Drive conectada ✓":"Todavía no conectaste una cuenta de Drive para este salón."}</p><label>Carpeta raíz en Drive<input id="driveRootFolder-${slug}" type="text" placeholder="Pegá acá el link de la carpeta raíz de Drive" value="${escapeHtml(acc.rootFolderId||"")}"></label><div class="modal-actions"><button class="primary-btn" data-connect-drive="${escapeHtml(salon)}">${acc.connected?"Reconectar cuenta de Drive":"Conectar cuenta de Drive"}</button><button class="secondary-btn" data-save-drive-root="${escapeHtml(salon)}">Guardar carpeta</button>${acc.connected?`<button class="danger-btn" data-clear-drive="${escapeHtml(salon)}">Desconectar Drive</button>`:""}</div></div>`;
+  }).join("")}`;
+}
+function whatsappSendersPanelBody(){
+  const senders=whatsappSenders();
+  const activeId=localStorage.getItem("janosActiveSender")||senders[0]?.id;
+  const typeMap=whatsappTemplatesByType();
+  return `<p class="muted">¿Quién sos en este dispositivo? Marcá tu nombre en la lista de abajo. Esta elección se guarda solo en este celular/computadora — cada persona la elige una vez, en el suyo. Solo define con qué nombre se firma (variable {remitente}): el texto del mensaje es el mismo para todos, y se elige según el tipo de evento.</p><div class="whatsapp-name-list">${senders.map(s=>`<div class="whatsapp-sender-row"><label class="whatsapp-sender-pick" title="Elegir como quién sos en este dispositivo"><input type="radio" name="whatsappActiveSenderPick" value="${s.id}" ${s.id===activeId?"checked":""}></label><input type="text" data-sender-name="${s.id}" value="${escapeHtml(s.name)}" placeholder="Ej: Melani">${senders.length>1?`<button class="danger-btn" type="button" data-delete-sender="${s.id}">Eliminar</button>`:""}</div>`).join("")}</div><div class="modal-actions"><button class="secondary-btn" type="button" id="addWhatsappSender">+ Agregar remitente</button></div><h3 class="whatsapp-types-title">Mensajes según el tipo de evento</h3><p class="muted">Cada cliente tiene un "Tipo de evento" cargado en su ficha (Boda, 15, Cumpleaños, Corporativo, Egresados u Otro). El mensaje inicial se elige automáticamente según ese tipo; "Otros eventos" se usa para Corporativo, Egresados y Otro.</p>${WHATSAPP_TYPE_TEMPLATES.map(t=>`<div class="whatsapp-type-block"><h4>${escapeHtml(t.label)}</h4><textarea rows="7" data-type-template="${t.key}">${escapeHtml(typeMap[t.key]||t.default||typeMap.general||DEFAULT_WHATSAPP_TEMPLATE)}</textarea><div class="modal-actions"><button class="secondary-btn" type="button" data-reset-type="${t.key}">Restaurar mensaje original</button></div></div>`).join("")}<p class="template-help">Variables disponibles: <code>{nombre}</code> <code>{homenajeado}</code> <code>{fecha}</code> <code>{salon}</code> <code>{tipo}</code> <code>{codigo}</code> <code>{remitente}</code></p><div class="modal-actions"><button class="primary-btn" id="saveWhatsappTemplate">Guardar mensajes</button></div>`;
+}
+function speechTemplatesPanelBody(){
+  const map=speechTemplates();
+  return `<p class="muted">Estos mensajes son fijos (no cambian según el tipo de evento) y se copian para pegar en el grupo de WhatsApp del cliente (ver el link de grupo en la ficha).</p>${SPEECH_TYPES.map(s=>`<div class="whatsapp-type-block"><h4>${escapeHtml(s.label)}</h4><textarea rows="10" data-speech-template="${s.key}">${escapeHtml(map[s.key]||s.default||"")}</textarea><div class="modal-actions"><button class="secondary-btn" type="button" data-reset-speech="${s.key}">Restaurar mensaje original</button></div></div>`).join("")}<p class="template-help">Variables disponibles: <code>{nombre}</code> <code>{homenajeado}</code> <code>{fecha}</code> <code>{salon}</code> <code>{tipo}</code> <code>{codigo}</code> <code>{remitente}</code> <code>{salonesSesion}</code> <code>{diaFechaSesion}</code> <code>{horaSesion}</code> <code>{salonSesion}</code> <code>{mapaSesion}</code> — estas 4 últimas solo se completan si la sesión ya está agendada.</p><div class="modal-actions"><button class="primary-btn" id="saveSpeechTemplates">Guardar mensajes de grupo</button></div>`;
+}
+function renderSettings() {
+  document.getElementById("settingsView").innerHTML = `<div class="settings-grid"><details class="panel rates-panel"><summary class="panel-head rates-summary"><h2>Modificar tarifas vigentes</h2><span class="collapse-icon">▶</span></summary><div class="panel-body"><p class="muted">Las tarifas marcadas con «temporada» se calculan según la tabla de temporada para eventos con fecha cubierta por ella; el valor de abajo solo aplica a fechas fuera de esa tabla.</p>${Object.entries(state.rates).map(([key,val])=>`<label class="rate-row"><span>${rateLabel(key)}${SEASONAL_RATE_KEYS.includes(key)?` <small class="muted" title="Para eventos con fecha dentro de la tabla de temporada se usa esa tabla, no este valor.">· temporada</small>`:""}</span><input type="number" min="0" data-rate="${key}" value="${Number(val)||0}"></label>`).join("")}<div class="modal-actions"><button class="primary-btn" id="saveRates">Guardar tarifas</button></div></div></details><details class="panel"><summary class="panel-head rates-summary"><h2>Datos y copias de seguridad</h2><span class="collapse-icon">▶</span></summary><div class="panel-body stack"><p class="muted">Generá una copia de seguridad periódicamente. Incluye clientes, tareas, rendiciones y tarifas.</p><button class="secondary-btn" id="exportBackup">Exportar copia JSON</button><label class="secondary-btn" style="text-align:center">Importar copia<input id="importBackup" type="file" accept="application/json" hidden></label><p class="muted">Usá este botón si cambiaron los servicios contratados de un evento (pack, adicionales o flex) y las tareas no se actualizaron. No borra el progreso ya cargado.</p><button class="secondary-btn" id="regenerateTasks">Actualizar plan de trabajo de todos los eventos</button><p class="muted">Plantilla de columnas para armar un CSV de clientes nuevos a importar en lote (no exporta los clientes que ya tenés cargados).</p><button class="secondary-btn" id="downloadClientTemplate">Descargar plantilla CSV</button><button class="danger-btn" id="clearData">Borrar todos los datos</button></div></details><details class="panel whatsapp-settings"><summary class="panel-head rates-summary"><h2>Mensaje inicial de WhatsApp</h2><span class="collapse-icon">▶</span></summary><div class="panel-body">${whatsappSendersPanelBody()}</div></details><details class="panel whatsapp-settings"><summary class="panel-head rates-summary"><h2>Mensajes para el grupo (speeches)</h2><span class="collapse-icon">▶</span></summary><div class="panel-body">${speechTemplatesPanelBody()}</div></details><details class="panel"><summary class="panel-head rates-summary"><h2>Mi cuenta de email (Zoho)</h2><span class="collapse-icon">▶</span></summary><div class="panel-body">${zohoAccountsPanelBody()}</div></details><details class="panel"><summary class="panel-head rates-summary"><h2>Cuentas de Drive</h2><span class="collapse-icon">▶</span></summary><div class="panel-body">${driveAccountsPanelBody()}</div></details></div>`;
+}
+function accessDate(value){return value?new Intl.DateTimeFormat("es-AR",{dateStyle:"short",timeStyle:"short"}).format(new Date(value)):"Nunca";}
+function renderUsers(){const view=document.getElementById("usersView");if(!view)return;if(accessProfile.role!=="admin"){view.innerHTML="";return;}view.innerHTML=`<div class="panel users-panel"><div class="panel-head"><div><h2>Usuarios registrados</h2><span class="muted">${adminUsers.length} cuentas</span></div></div><div class="user-row header"><span>Usuario</span><span>WhatsApp</span><span>Registro</span><span>Último acceso</span><span>Estado</span></div>${adminUsers.map(user=>`<div class="user-row"><div><strong>${escapeHtml(user.display_name||"Sin nombre")}</strong><small>${escapeHtml(user.email||"")}${user.role==="admin"?" · Administrador":""}</small></div><span>${escapeHtml(user.whatsapp||"Sin informar")}</span><span>${accessDate(user.created_at)}</span><span>${accessDate(user.last_seen_at)}</span><div>${user.role==="admin"?`<span class="status-pill active">Administrador</span>`:`<button class="small-btn ${user.status==="blocked"?"":"danger"}" data-user-status="${user.id}" data-next-status="${user.status==="blocked"?"active":"blocked"}">${user.status==="blocked"?"Reactivar":"Bloquear"}</button><button class="small-btn danger" data-delete-user="${user.id}">Eliminar</button>`}</div></div>`).join("")}</div>`;}
+async function changeUserStatus(id,status){const user=adminUsers.find(item=>item.id===id);if(!user||!confirm(`¿${status==="blocked"?"Bloquear":"Reactivar"} la cuenta de ${user.display_name||user.email}?`))return;try{await setUserStatus(id,status);if(status==="active"&&user.email){try{await notifyUserApproved(id,user.email,user.display_name||"");toast("Usuario reactivado y notificado por email");}catch(e){console.error(e);toast("Usuario reactivado · no se pudo enviar el email");}}else{toast(status==="blocked"?"Usuario bloqueado":"Usuario reactivado");}adminUsers=await listUserProfiles();renderUsers();}catch(error){console.error(error);toast("No se pudo cambiar el acceso");}}
+async function deleteUserAccount(id){const user=adminUsers.find(item=>item.id===id);if(!user||!confirm(`¿Eliminar definitivamente la cuenta de ${user.display_name||user.email}? Esta acción no se puede deshacer.`))return;try{await deleteUser(id);toast("Usuario eliminado");adminUsers=await listUserProfiles();renderUsers();}catch(error){console.error(error);toast("No se pudo eliminar el usuario");}}
+function rateLabel(k) { return ({gold:"Gold completo",silver:"Silver completo",book:"Book completo",eventCoverage:"Cobertura evento",eventEdit:"Edición evento",bookCoverage:"Cobertura book",bookEdit:"Edición book",informal:"Informal completo",informalRecording:"Informal solo grabación",ceremony:"Ceremonia completa",ceremonyRecording:"Ceremonia grabación",ceremonyEdit:"Ceremonia edición",drone:"Drone",photoExtra:"Fotógrafo extra",videoExtra:"Videógrafo extra",liveEditor:"Edición en vivo",signatureDesign:"Diseño libro firmas + mural",partyBookDesign:"Diseño libro fiesta",videoExtraClip:"Video crono/entrada",albumInteractive:"Álbum interactivo",droneEdit:"Edición drone FPV",assistant:"Asistente book",extraSheet:"Pliego extra",churchUpgrade:"Iglesia por upgrade",totemDigital:"Tótem / Televisor Fotografía Digital",bookModa:"Adicional book con Moda",extraCameraEdit:"Adicional cámara edición video"})[k]||k; }
+
+
+const MANUAL_WORKS = {
+  "PERSONAL FOTOGRAFIA": [
+    { label: "Fiesta (cobertura y edicion)", rate: "silver" },
+    { label: "Sesion de fotos (cobertura + edicion)", rate: "book" },
+    { label: "Evento Informal", rate: "informal" },
+    { label: "Civil (valor book)", rate: "book" },
+    { label: "Iglesia fuera del salon (canje del book)", rate: "book" },
+    { label: "Templo Bar/Bat (valor book)", rate: "book" },
+    { label: "Iglesia fuera del salon (extra por upgrade)", rate: "churchUpgrade" },
+    { label: "Adicional ceremonia en salon", rate: "ceremony" },
+    { label: "Adicional book con produccion de moda", rate: "bookModa" },
+    { label: "Asistente book moda o Palacio", rate: "assistant" },
+    { label: "Evento Corporativo", rate: null },
+    { label: "VIATICOS (SOLO FOTOGRAFO)", rate: null },
+    { label: "Sesion Sans Souci (cobertura + edicion)", rate: "book" },
+    { label: "Fotografo extra", rate: "photoExtra" },
+  ],
+  "PERSONAL VIDEO": [
+    { label: "Fiesta (grabacion + edicion)", rate: "silver" },
+    { label: "Fiesta (cobertura sin edicion)", rate: "eventCoverage" },
+    { label: "Fiesta (edicion)", rate: "eventEdit" },
+    { label: "Sesion de fotos (grabacion + edicion back)", rate: "book" },
+    { label: "Sesion de fotos (solo grabacion)", rate: "bookCoverage" },
+    { label: "Sesion de fotos (solo edicion)", rate: "bookEdit" },
+    { label: "Civil (valor book)", rate: "book" },
+    { label: "Adicional ceremonia en salon", rate: "ceremony" },
+    { label: "Adicional ceremonia en salon solo grabacion", rate: "ceremonyRecording" },
+    { label: "Adicional ceremonia en salon solo edicion", rate: "ceremonyEdit" },
+    { label: "Adicional camara edicion video", rate: "extraCameraEdit" },
+    { label: "Iglesia fuera del salon (canje del book)", rate: "book" },
+    { label: "Templo Bar/Bat (valor book)", rate: "book" },
+    { label: "Iglesia fuera del salon (extra por upgrade)", rate: "churchUpgrade" },
+    { label: "Adicional book con produccion de moda", rate: "bookModa" },
+    { label: "Evento Corporativo (grabacion + edicion)", rate: null },
+    { label: "Evento Corporativo (solo grabacion)", rate: null },
+    { label: "Evento Corporativo (solo edicion)", rate: null },
+    { label: "Evento Informal (grabacion + edicion)", rate: null },
+    { label: "Evento Informal (solo grabacion)", rate: "informalRecording" },
+    { label: "Evento Informal (solo edicion)", rate: null },
+    { label: "VIATICOS (SOLO VIDEOGRAFO)", rate: null },
+    { label: "Videografo extra", rate: "videoExtra" },
+    { label: "Clip actuado amigas (valor book)", rate: "book" },
+    { label: "Edicion de video Drone FPV", rate: "droneEdit" },
+  ],
+  "COMPLEMENTOS": [
+    { label: "Drone en evento", rate: "drone", role: "video" },
+    { label: "Drone en sesión de fotos", rate: "drone", role: "video" },
+    { label: "DRONE FPV", rate: "drone", role: "video" },
+    { label: "DRONE FPV (SOLO EDICION)", rate: "droneEdit", role: "video" },
+    { label: "Edicion en vivo de fotos", rate: "liveEditor", role: "foto" },
+    { label: "Edicion en vivo video", rate: "liveEditor", role: "video" },
+    { label: "Libro firmas (Fotografia Digital)", rate: "signatureDesign", role: "foto" },
+    { label: "Libro Fiesta (Fotografia Digital)", rate: "partyBookDesign", role: "foto" },
+    { label: "Diseño de pliegos extra en libro (aclarar cantidad en Observaciones)", rate: "extraSheet", role: "foto" },
+    { label: "Video cronologico", rate: "videoExtraClip", role: "video" },
+    { label: "Video de entrada para pantalla", rate: "videoExtraClip", role: "video" },
+    { label: "Video con amigos", rate: "book", role: "video" },
+    { label: "Album de fotos interactivo (fotografía)", rate: "albumInteractive", role: "foto" },
+    { label: "Album de fotos interactivo (videos)", rate: "albumInteractive", role: "video" },
+    { label: "Fiesta (segundo fotografo)", rate: "photoExtra", role: "foto" },
+    { label: "Fiesta (segundo videografo)", rate: "videoExtra", role: "video" },
+    { label: "Televisor Fotografia Digital", rate: "totemDigital", role: "foto" },
+    { label: "Asistente en sesion de fotos", rate: "assistant", role: "foto" },
+    // Los siguientes quedan "ambos" (sin filtrar) porque no está claro a qué rol pertenecen — confirmar con Pablo y ajustar.
+    { label: "Adicional edicion por camara extra", rate: "extraCameraEdit", role: "ambos" },
+    { label: "Glam Cam 360°", rate: null, role: "ambos" },
+    { label: "Party Cam 360", rate: null, role: "ambos" },
+    { label: "Music Video", rate: null, role: "video" },
+    { label: "INFINITY BOX", rate: null, role: "ambos" },
+    { label: "Holograma recepcion", rate: null, role: "ambos" },
+    { label: "Centro de mesa interactivo x1", rate: null, role: "ambos" },
+    { label: "Mapping Globo", rate: null, role: "ambos" },
+    { label: "Maquillaje", rate: null, role: "ambos" },
+    { label: "Maquillaje plus", rate: null, role: "ambos" },
+    { label: "Maquillaje x2 plus", rate: null, role: "ambos" },
+    { label: "ADICIONAL MAQUILLAJE EVENTO", rate: null, role: "ambos" },
+    { label: "ADICIONAL MAQUILLAJE RECEPCION", rate: null, role: "ambos" },
+    { label: "MAQUILLAJE BOOK", rate: null, role: "ambos" },
+    { label: "Vestuario, maquillaje y peinado book moda", rate: "bookModa", role: "foto" },
+    { label: "Fashion look", rate: null, role: "foto" },
+    { label: "Invitacion interactiva", rate: null, role: "ambos" },
+    { label: "Pulseras LED", rate: null, role: "ambos" },
+    { label: "Recepcion Clientes Palacio SS", rate: null, role: "ambos" },
+  ]
+};
+
+
+function openManualRenditionDialog() {
+  const salons = [...MANAGED_SALONS];
+  document.getElementById("manualRenditionSalon").innerHTML = salons.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("") + '<option value="Otro">Otro</option>';
+  document.getElementById("manualRenditionDate").value = "";
+  document.getElementById("manualRenditionAmount").value = "";
+  document.getElementById("manualRenditionNotes").value = "";
+  document.getElementById("manualRenditionCategory").value = "PERSONAL FOTOGRAFIA";
+  updateManualRenditionWorks();
+  document.getElementById("manualRenditionDialog").showModal();
+}
+function updateManualRenditionWorks() {
+  const cat = document.getElementById("manualRenditionCategory").value;
+  const works = MANUAL_WORKS[cat] || [];
+  document.getElementById("manualRenditionWork").innerHTML = works.map(w => `<option value="${escapeHtml(w.label)}" data-rate="${w.rate||""}">${escapeHtml(w.label)}</option>`).join("");
+  updateManualRenditionRate();
+}
+function updateManualRenditionRate() {
+  const sel = document.getElementById("manualRenditionWork");
+  const opt = sel && sel.options[sel.selectedIndex];
+  const rateKey = opt ? opt.getAttribute("data-rate") : "";
+  const eventDate = document.getElementById("manualRenditionDate").value;
+  const amount = rateKey ? (getRate(rateKey, eventDate) || "") : "";
+  document.getElementById("manualRenditionAmount").value = amount;
+}
+function saveManualRendition() {
+  const date = document.getElementById("manualRenditionDate").value;
+  const salon = document.getElementById("manualRenditionSalon").value;
+  const category = document.getElementById("manualRenditionCategory").value;
+  const work = document.getElementById("manualRenditionWork").value;
+  const amount = Number(document.getElementById("manualRenditionAmount").value);
+  const notes = document.getElementById("manualRenditionNotes").value.trim();
+  if (!date) { toast("Ingresá la fecha del evento."); return; }
+  if (!salon) { toast("Elegí un salón."); return; }
+  if (!amount || amount <= 0) { toast("Ingresá el importe."); return; }
+  const rendition = {
+    id: uid(), clientId: null, taskId: null,
+    work, category, amount,
+    eventDate: date, salon,
+    workDate: date,
+    periodEnd: periodEndFor(date),
+    notes: notes || undefined,
+    observations: notes || "",
+    status: "pending",
+    isManual: true,
+    createdAt: new Date().toISOString()
+  };
+  state.renditions.push(rendition);
+  saveState();
+  toast("Rendición manual cargada");
+  document.getElementById("manualRenditionDialog").close();
+  renderRenditions();
+}
+
+function populateClientSalonSelect(currentSalon){
+  const select=document.querySelector('#clientForm [name="salon"]'); if(!select)return;
+  const mySalons=(accessProfile.salons&&accessProfile.salons.length)?[...accessProfile.salons]:["Quinta","Pilar Hotel"];
+  if(currentSalon&&!mySalons.includes(currentSalon))mySalons.push(currentSalon);
+  select.innerHTML='<option value="">Seleccionar</option>'+mySalons.map(s=>`<option>${escapeHtml(s)}</option>`).join("")+'<option>Otro</option>';
+}
+// Si el formulario se abrió desde "Editar ficha" dentro de la ficha del cliente
+// (que se cierra al abrir el form), acá guardamos a quién volver a abrir después
+// de guardar, para no perder el contexto de tareas/rendición del cliente.
+let clientFormReopenDetailId = null;
+function openClientForm(client=null, reopenDetailId=null) {
+  clientFormReopenDetailId = reopenDetailId;
+  const form=document.getElementById("clientForm"); form.reset(); form.elements.id.value=client?.id||"";
+  document.getElementById("clientDialogTitle").textContent=client?"Editar cliente":"Nuevo cliente";
+  document.getElementById("deleteClientFromForm").classList.toggle("hidden",!client);
+  document.getElementById("resetContactBtn").classList.toggle("hidden",!client?.contactedAt);
+  populateClientSalonSelect(client?.salon);
+  if(client) ["code","eventDate","salon","type","honoree","clientName","clientPhone","clientEmail","whatsappGroupUrl","driveUrl","guests","pack","notes"].forEach(k=>form.elements[k].value=client[k]??"");
+  form.elements.isExternal.checked=Boolean(client?.isExternal);
+  renderFormChecks(client); document.getElementById("clientDialog").showModal(); updateFlexField();
+}
+function renderFormChecks(client) {
+  const selected=client?.addons||[], flex=normalizeFlexServices(client?.flexServices);
+  document.getElementById("addonChecks").innerHTML=ADDONS.map(([v,l])=>`<label><input type="checkbox" name="addons" value="${v}" ${selected.includes(v)?"checked":""}>${l}</label>`).join("");
+  document.getElementById("flexChecks").innerHTML=FLEX_SERVICES.map(([v,l])=>`<label><input type="checkbox" name="flexServices" value="${v}" ${flex.includes(v)?"checked":""}>${l}</label>`).join("");
+}
+function updateFlexField() {
+  const checked=[...document.querySelectorAll('[name="addons"]:checked')].map(x=>x.value), limit=checked.includes("flex")?5:checked.includes("miniflex")?2:0;
+  if(!limit)document.querySelectorAll('[name="flexServices"]').forEach(input=>{input.checked=false;input.disabled=false;});
+  document.getElementById("flexField").classList.toggle("hidden",!limit);
+  const checkedValues=[...document.querySelectorAll('[name="flexServices"]:checked')].map(x=>x.value);
+  const count=countFlexSlots(checkedValues), usedSlots=new Set(checkedValues.map(flexServiceSlot));
+  document.getElementById("flexLimitHelp").textContent=limit?`(${count}/${limit})`:"";
+  if(limit)document.querySelectorAll('[name="flexServices"]').forEach(input=>{input.disabled=!input.checked&&count>=limit&&!usedSlots.has(flexServiceSlot(input.value));});
+}
+function saveClient(form) {
+  const data=Object.fromEntries(new FormData(form)); const addons=[...form.querySelectorAll('[name="addons"]:checked')].map(x=>x.value); const flexServices=[...form.querySelectorAll('[name="flexServices"]:checked')].map(x=>x.value);
+  data.isExternal=form.elements.isExternal.checked;
+  data.whatsappGroupUrl=String(data.whatsappGroupUrl||"").trim();
+  data.driveUrl=String(data.driveUrl||"").trim();
+  data.clientEmail=String(data.clientEmail||"").trim();
+  if(data.clientPhone){const phoneDigits=whatsappNumber(data.clientPhone).length;if(phoneDigits<10||phoneDigits>15){toast("Ingresá el WhatsApp con código de país, por ejemplo +54 9 11 1234 5678 o +34 697 94 15 66.");form.elements.clientPhone.focus();return false;}}
+  const limit=addons.includes("flex")?5:addons.includes("miniflex")?2:0; if(limit&&countFlexSlots(flexServices)>limit){toast(`Elegí como máximo ${limit} servicios para ${limit===2?"Mini Flex":"Flex"}.`); return false;}
+  const duplicate=state.clients.find(c=>c.code===data.code&&c.id!==data.id); if(duplicate){toast("Ya existe un cliente con ese código."); return false;}
+  if(data.id){const c=state.clients.find(x=>x.id===data.id); Object.assign(c,data,{addons,flexServices,guests:Number(data.guests||0)}); syncTasks(c);}
+  else {const client={...data,id:uid(),addons,flexServices,guests:Number(data.guests||0),createdAt:new Date().toISOString(),history:[{date:new Date().toISOString(),text:"Cliente creado"}]}; client.tasks=createTasks(client); state.clients.push(client);}
+  saveState(); toast(data.id?"Cliente actualizado":"Cliente creado con su plan de trabajo"); return true;
+}
+function syncTasks(client) { const existing=new Map(client.tasks.map(t=>[t.key,t])); const newTasks=createTasks(client); const newKeys=new Set(newTasks.map(t=>t.key)); const removedTasks=client.tasks.filter(t=>!newKeys.has(t.key)); removedTasks.forEach(t=>{const r=state.renditions.find(r=>r.taskId===t.id); if(r&&r.status==="pending"){state.renditions=state.renditions.filter(x=>x.id!==r.id); client.history.push({date:new Date().toISOString(),text:`Rendición eliminada automáticamente (servicio quitado): ${r.work}`,type:"rendition_delete",renditionId:r.id});}}); client.tasks=newTasks.map(t=>existing.has(t.key)?{...existing.get(t.key),title:t.title,phase:t.phase,payable:t.payable,category:t.category,work:t.work,rateKey:t.rateKey}:t); client.history.push({date:new Date().toISOString(),text:"Datos del cliente actualizados"}); }
+function tasksAtRiskOnRegenerate(){const atRisk=[];state.clients.forEach(c=>{const newKeys=new Set(createTasks(c).map(t=>t.key));c.tasks.forEach(t=>{if(t.status!=="pending"&&!newKeys.has(t.key))atRisk.push({c,t});});});return atRisk;}
+
+function isUuid(value){return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value||""));}
+function normalizeIds(){const clientMap=new Map(),taskMap=new Map();state.clients.forEach(client=>{if(!isUuid(client.id)){const old=client.id;client.id=uid();clientMap.set(old,client.id);}client.tasks.forEach(task=>{if(!isUuid(task.id)){const old=task.id;task.id=uid();taskMap.set(old,task.id);}});});state.renditions.forEach(item=>{if(clientMap.has(item.clientId))item.clientId=clientMap.get(item.clientId);if(taskMap.has(item.taskId))item.taskId=taskMap.get(item.taskId);if(!isUuid(item.id))item.id=uid();});}
+function setSyncStatus(text){const el=document.getElementById("syncStatus");if(el)el.textContent=text;setBootStatus(text);}
+// Cartel de arranque: se ve mientras la app todavia no decidio si mostrar el
+// login o el panel (verificando sesion, trayendo datos de Supabase, etc.).
+// setBootStatus actualiza el textito chico con el paso actual; hideBootLoader
+// lo apaga apenas se muestra el login o el panel (se llama desde setAuthMode
+// y desde el final de startApplication, que cubren todas las salidas posibles).
+function setBootStatus(text){const el=document.getElementById("bootLoaderStatus");if(el)el.textContent=text;}
+function hideBootLoader(){document.getElementById("bootLoader")?.classList.add("hidden");}
+function renderSignupSalonChecks() {
+  const container = document.getElementById("signupSalonChecks");
+  if (!container) return;
+  container.innerHTML = MANAGED_SALONS.map(s => `<label data-salon-label="${escapeHtml(s)}"><input type="checkbox" name="signupSalons" value="${escapeHtml(s)}">${escapeHtml(s)}</label>`).join("");
+}
+renderSignupSalonChecks();
+document.getElementById("signupSalonSearch")?.addEventListener("input", e => {
+  const term = e.target.value.trim().toLowerCase();
+  document.querySelectorAll('#signupSalonChecks [data-salon-label]').forEach(label => {
+    label.classList.toggle("hidden", !label.dataset.salonLabel.toLowerCase().includes(term));
+  });
+});
+// Salones que el usuario logueado administra: si tiene alguno asignado, se usa para acotar
+// el desplegable "Elegí un salón"; si no tiene ninguno (o es admin), ve todos.
+function visibleSalons(allSalons) {
+  const mine = accessProfile?.salons || [];
+  if (accessProfile?.role === "admin" || !mine.length) return allSalons;
+  return allSalons.filter(s => mine.includes(s));
+}
+// Salones que realmente aparecen en los clientes cargados (vía CSV o alta manual).
+// A diferencia de visibleSalons(), no depende del rol ni de "salones que administro":
+// cada cuenta ya ve solo sus propios clientes (RLS), así que alcanza con mirar qué
+// salones usó. MANAGED_SALONS sigue completo en el código para el alta de clientes
+// nuevos y el checklist de registro; esto es solo para los desplegables de filtro.
+function salonsInUse() { return [...new Set(state.clients.map(c => String(c.salon || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "es")); }
+function setConflictBanner(visible,text){const el=document.getElementById("conflictBanner");if(el){el.classList.toggle("hidden",!visible);const span=el.querySelector("span");if(span&&text)span.textContent=text;}}
+function syncedSnapshotKey(key){return `${key}:synced`;}
+function loadSyncedSnapshot(key){try{const raw=localStorage.getItem(syncedSnapshotKey(key));return raw?JSON.parse(raw):null;}catch{return null;}}
+function saveSyncedSnapshot(key,snapshotState){try{localStorage.setItem(syncedSnapshotKey(key),JSON.stringify(snapshotState));}catch{}}
+// Detecta qué registros (por id) cambiaron localmente respecto a la última copia sincronizada.
+function diffChangedIds(current,baseline){const changed=new Set();const baseMap=new Map((baseline||[]).map(item=>[item.id,JSON.stringify(item)]));(current||[]).forEach(item=>{if(baseMap.get(item.id)!==JSON.stringify(item))changed.add(item.id);});return changed;}
+// Combina lo último guardado en la nube (por otro dispositivo/usuario) con SOLO los cambios que hicimos
+// nosotros localmente desde la última sincronización exitosa. Así nunca se pisa el trabajo de un compañero
+// ni se pierde el propio.
+function mergeForSync(fresh, local, baseline) {
+  const merged = { ...fresh };
+  ["clients", "renditions"].forEach(collection => {
+    const freshList = fresh[collection] || [], localList = local[collection] || [], baselineList = baseline[collection] || [];
+    const changedIds = diffChangedIds(localList, baselineList);
+    const baselineIds = new Set(baselineList.map(item => item.id));
+    const localIds = new Set(localList.map(item => item.id));
+    const deletedIds = [...baselineIds].filter(id => !localIds.has(id));
+    const byId = new Map(freshList.map(item => [item.id, item]));
+    changedIds.forEach(id => { const localItem = localList.find(item => item.id === id); if (localItem) byId.set(id, localItem); });
+    deletedIds.forEach(id => byId.delete(id));
+    merged[collection] = [...byId.values()];
+  });
+  const changedRateKeys = Object.keys(local.rates || {}).filter(k => JSON.stringify(local.rates[k]) !== JSON.stringify((baseline.rates || {})[k]));
+  merged.rates = { ...fresh.rates, ...Object.fromEntries(changedRateKeys.map(k => [k, local.rates[k]])) };
+  if (JSON.stringify(local.settings) !== JSON.stringify(baseline.settings)) merged.settings = local.settings;
+  return merged;
+}
+function scheduleCloudSync(){if(!cloudEnabled||!currentUser)return;clearTimeout(cloudTimer);cloudTimer=setTimeout(()=>runCloudSync(),650);}
+// Sincroniza con reintento indefinido: nunca tira el cambio local, lo deja en cola (localStorage)
+// y sigue intentando con backoff creciente. Si detecta cambios de otro dispositivo, los combina
+// con los propios en vez de descartarlos.
+async function runCloudSync(backoffMs = 3000) {
+  if (!currentUser) return;
+  if (cloudSyncing) { cloudSyncPending = true; return; }
+  cloudSyncing = true;
+  try {
+    normalizeIds();
+    localStorage.setItem(storageKey, JSON.stringify(state));
+    setSyncStatus("Guardando en la nube…");
+    const latest = remoteSnapshotAt ? await getLatestUpdateAt() : null;
+    if (latest && remoteSnapshotAt && latest > remoteSnapshotAt) {
+      setSyncStatus("Combinando cambios de otro dispositivo…");
+      const freshCloud = await loadCloudState(BASE_RATES);
+      const baseline = lastSyncedState || freshCloud;
+      state = mergeForSync(freshCloud, state, baseline);
+      localStorage.setItem(storageKey, JSON.stringify(state));
+      render();
+      await syncCloudState(state, currentUser);
+      toast("Se combinaron tus cambios con los de otro dispositivo, sin perder datos.");
+    } else {
+      await syncCloudState(state, currentUser);
+    }
+    remoteSnapshotAt = (await getLatestUpdateAt()) || new Date().toISOString();
+    lastSyncedState = JSON.parse(JSON.stringify(state));
+    saveSyncedSnapshot(storageKey, state);
+    setSyncStatus("Sincronizado");
+    setConflictBanner(false);
+  } catch (error) {
+    console.error(error);
+    setSyncStatus(`Sin conexión · reintentando en ${Math.round(backoffMs / 1000)}s (tu cambio sigue guardado)…`);
+    if (backoffMs >= 8000) setConflictBanner(true, "No se pudo guardar en la nube todavía. Tu cambio sigue a salvo en este dispositivo y se sigue reintentando solo.");
+    cloudSyncing = false;
+    cloudTimer = setTimeout(() => runCloudSync(Math.min(backoffMs * 2, 60000)), backoffMs);
+    return;
+  } finally {
+    cloudSyncing = false;
+  }
+  if (cloudSyncPending) { cloudSyncPending = false; scheduleCloudSync(); }
+}
+async function forceRetrySync(){clearTimeout(cloudTimer);await runCloudSync();}
+
+function parseCsv(text) {
+  const firstLine=(text.split(/\r?\n/,1)[0]||"");
+  const delimiter=(firstLine.match(/;/g)||[]).length>(firstLine.match(/,/g)||[]).length?";":",";
+  const rows=[]; let row=[],value="",quoted=false;
+  for(let i=0;i<text.length;i+=1){const char=text[i];if(char==='"'&&quoted&&text[i+1]==='"'){value+='"';i+=1;}else if(char==='"'){quoted=!quoted;}else if(char===delimiter&&!quoted){row.push(value.trim());value="";}else if((char==='\n'||char==='\r')&&!quoted){if(char==='\r'&&text[i+1]==='\n')i+=1;row.push(value.trim());if(row.some(Boolean))rows.push(row);row=[];value="";}else value+=char;}
+  row.push(value.trim());if(row.some(Boolean))rows.push(row);if(rows.length<2)return [];
+  const headers=rows.shift().map(normalizeHeader);
+  return rows.map(cells=>Object.fromEntries(headers.map((header,index)=>[header,cells[index]||""])));
+}
+function normalizeHeader(value){return String(value||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_|_$/g,"");}
+function firstValue(row,keys){for(const key of keys){if(row[key]!==undefined&&String(row[key]).trim()!=="")return String(row[key]).trim();}return "";}
+function normalizeDate(value){const text=String(value||"").trim();if(/^\d{4}-\d{1,2}-\d{1,2}$/.test(text)){const[y,m,d]=text.split("-");return `${y}-${m.padStart(2,"0")}-${d.padStart(2,"0")}`;}const match=text.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/);if(!match)return "";const year=match[3].length===2?`20${match[3]}`:match[3];return `${year}-${match[2].padStart(2,"0")}-${match[1].padStart(2,"0")}`;}
+// "CERE VIP"/"CERE GOLD" son solo el nivel de la ceremonia (adicional "cere"), no
+// tienen nada que ver con el pack del cliente — hay que sacarlos antes de buscar
+// VIP/GOLD, si no un cliente Silver con "(CERE VIP)" se detecta como pack VIP.
+function parsePack(raw){const text=String(raw||"").toUpperCase().replace(/CERE\s*(VIP|GOLD)?/g,"");if(text.includes("VIP"))return "vip";if(text.includes("INFORMAL"))return "informal";if(text.includes("GOLD")||text.includes("ALL INCLUSIVE")||text.includes("GOLDEN"))return "gold";return "silver";}
+function parseAddons(raw){const text=String(raw||"").toUpperCase(),items=[];const rules=[["pant",/PANT/],["miniflex",/UP\.?MFLEX|MINI\s*FLEX/],["flex",/UP\.FLEX|\bFLEX\b/],["libro",/LIBRO/],["maquix2plus",/MAQUI\s*X\s*2\s*PLUS/],["maquiplus",/MAQUI\s*PLUS/],["maqui",/MAQUI/],["moda",/\bMODA\b/],["drone",/DRONE/],["sansSouci",/SANS\s*SOUCI/],["glamCam",/G\.?\s*CAM/],["alfombraRoja",/A\.?\s*ROJA/],["invitacion",/INVITACION/],["fotoIman",/FOTO\.?\s*IMAN/],["vipUpgrade",/UP\.?\s*VIP/],["cere",/\bCERE\b/]];rules.forEach(([key,regex])=>{if(regex.test(text))items.push(key);});let result=[...new Set(items)];if(result.includes("miniflex"))result=result.filter(x=>x!=="flex");if(result.includes("maquix2plus"))result=result.filter(x=>x!=="maqui"&&x!=="maquiplus");else if(result.includes("maquiplus"))result=result.filter(x=>x!=="maqui");return result;}
+function parseFlexServices(raw){const text=String(raw||"").toUpperCase(),items=[];const rules=[["church",/IGLESIA|TEMPLO/],["civilPhoto",/CIVIL/],["droneEvent",/DRONE.*(EVENTO|RECEPC)/],["droneBook",/DRONE.*(BOOK|SESION)/],["photoExtra",/FOTOGRAFO EXTRA/],["videoExtra",/VIDEOGRAFO EXTRA/],["signatureBook",/LIBRO.*FIRMA/],["partyBook",/LIBRO.*FIESTA/],["liveEditor",/EDITOR.*VIVO|EDICION EN VIVO/],["friendsVideo",/VIDEO.*AMIG/],["extraSession",/SESION EXTRA/]];rules.forEach(([key,regex])=>{if(regex.test(text))items.push(key);});return items;}
+function askCsvConflict(client, diffs, remaining) {
+  return new Promise(resolve => {
+    const overlay = document.createElement("div");
+    overlay.className = "csv-conflict-overlay";
+    overlay.innerHTML = `
+      <div class="csv-conflict-box">
+        <p class="eyebrow">Conflicto al importar CSV</p>
+        <h3>${escapeHtml(client.honoree)} <span class="muted">#${escapeHtml(client.code)}</span></h3>
+        <p class="csv-conflict-label">Cambios detectados:</p>
+        <ul class="csv-conflict-diffs">${diffs.map(d => `<li>${escapeHtml(d)}</li>`).join("")}</ul>
+        ${remaining > 0 ? `<p class="muted csv-conflict-remaining">Quedan ${remaining} cliente(s) más con cambios por revisar.</p>` : ""}
+        <div class="csv-conflict-actions">
+          <button type="button" data-conflict="skip" class="secondary-btn">Omitir este</button>
+          <button type="button" data-conflict="apply" class="secondary-btn">Aplicar este</button>
+          ${remaining > 0 ? `<button type="button" data-conflict="skipAll" class="ghost-btn">Omitir todos los restantes</button><button type="button" data-conflict="applyAll" class="primary-btn">Aplicar todos los restantes</button>` : ""}
+        </div>
+      </div>`;
+    overlay.addEventListener("click", e => {
+      const btn = e.target.closest("[data-conflict]");
+      if (!btn) return;
+      document.body.removeChild(overlay);
+      resolve(btn.dataset.conflict);
+    });
+    document.body.appendChild(overlay);
+  });
+}
+async function importClientCsv(file){
+  try{
+  if(!file){toast("No se seleccionó ningún archivo.");return;}
+  const bytes=await file.arrayBuffer();let text=new TextDecoder("utf-8").decode(bytes);if(text.includes("�"))text=new TextDecoder("windows-1252").decode(bytes);text=text.replace(/^\uFEFF/,"");
+  let rows;
+  try{rows=parseCsv(text);}catch(parseError){console.error("Error al parsear CSV:",parseError);toast("El archivo no se pudo leer. Verificá que sea un CSV válido exportado correctamente.");return;}
+  if(!rows.length){toast("El CSV no contiene filas para importar.");return;}
+  let created=0,existingSkipped=0,skipped=0,duplicatedInFile=0,rowErrors=0,emailsUpdated=0;const seenCodes=new Set();
+  const conflicts=[];
+  rows.forEach((row,index)=>{
+    try{
+      const code=firstValue(row,["codigo","codigo_evento","cod_evento","evento"]),eventDate=normalizeDate(firstValue(row,["fecha","fecha_evento","fecha_del_evento"]));if(!code||!eventDate){skipped+=1;return;}if(seenCodes.has(String(code))){duplicatedInFile+=1;return;}seenCodes.add(String(code));
+      const existing=state.clients.find(c=>String(c.code)===String(code));
+      const rawPack=firstValue(row,["pack_upgrades","pack_y_upgrades","fotografia","pack","servicios"]),addonsText=[rawPack,firstValue(row,["adicionales","upgrades","complementos"])].filter(Boolean).join(" "),flexText=firstValue(row,["servicios_flex","elecciones_flex","mini_flex","flex"]);
+      const csvPack=parsePack(rawPack),csvAddons=parseAddons(addonsText),csvFlex=parseFlexServices(flexText);
+      const csvEmail=String(firstValue(row,["email","correo","mail","email_cliente","correo_electronico"])||"").trim();
+      if(existing){
+        if(csvEmail&&existing.clientEmail!==csvEmail){existing.clientEmail=csvEmail;emailsUpdated+=1;}
+        const packChanged=existing.pack!==csvPack;
+        const addonsChanged=JSON.stringify([...existing.addons].sort())!==JSON.stringify([...csvAddons].sort());
+        if(!packChanged&&!addonsChanged){existingSkipped+=1;return;}
+        const diffs=[];
+        if(packChanged)diffs.push(`Pack: ${packLabel(existing.pack)} → ${packLabel(csvPack)}`);
+        if(addonsChanged)diffs.push(`Adicionales: [${existing.addons.join(", ")||"ninguno"}] → [${csvAddons.join(", ")||"ninguno"}]`);
+        conflicts.push({client:existing,csvPack,csvAddons,csvFlex,diffs});
+        return;
+      }
+      const incoming={code,eventDate,salon:firstValue(row,["salon","sede"])||"Otro",type:firstValue(row,["tipo","tipo_evento"])||"Otro",honoree:firstValue(row,["homenajeado","homenajeada","homenajead","nombre_evento"])||firstValue(row,["cliente","nombre_cliente"])||`Evento ${code}`,clientName:firstValue(row,["cliente","nombre_cliente","contacto_cliente"]),clientEmail:csvEmail,clientPhone:(()=>{const raw=firstValue(row,["whatsapp","telefono","telefono_cliente","celular"]);return raw&&raw.replace(/\D/g,"").length>=8?raw:"";})(),guests:Number(firstValue(row,["invitados","cantidad_invitados"])||0),pack:csvPack,addons:csvAddons,flexServices:csvFlex,notes:firstValue(row,["notas","observaciones","comentarios"])};const client={...incoming,id:uid(),createdAt:new Date().toISOString(),history:[{date:new Date().toISOString(),text:"Cliente importado desde CSV"}]};client.tasks=createTasks(client);state.clients.push(client);created+=1;
+    }catch(rowError){console.error(`Error en la fila ${index+2} del CSV:`,rowError,row);rowErrors+=1;}
+  });
+  // Process conflicts one by one, using a custom modal that supports "apply all"/"skip all"
+  let updated=0;
+  for(let i=0;i<conflicts.length;i++){
+    const {client,csvPack,csvAddons,csvFlex,diffs}=conflicts[i];
+    try{
+      const remaining=conflicts.length-1-i;
+      const decision=await askCsvConflict(client,diffs,remaining);
+      if(decision==="applyAll"){
+        // Apply this one and all remaining without asking again
+        for(let j=i;j<conflicts.length;j++){
+          const cc=conflicts[j];
+          cc.client.pack=cc.csvPack;cc.client.addons=cc.csvAddons;cc.client.flexServices=cc.csvFlex;syncTasks(cc.client);updated+=1;
+        }
+        break;
+      }
+      if(decision==="skipAll"){
+        existingSkipped+=conflicts.length-i;
+        break;
+      }
+      if(decision==="apply"){client.pack=csvPack;client.addons=csvAddons;client.flexServices=csvFlex;syncTasks(client);updated+=1;}
+      else{existingSkipped+=1;}
+    }catch(conflictError){console.error("Error al procesar conflicto de cliente:",conflictError,client);rowErrors+=1;}
+  }
+  saveState();toast(`${created} nuevos agregados${updated?` · ${updated} actualizados`:""}${emailsUpdated?` · ${emailsUpdated} email(s) actualizados`:""}${existingSkipped?` · ${existingSkipped} sin cambios`:""}${duplicatedInFile?` · ${duplicatedInFile} código(s) repetido(s) en el archivo`:""}${skipped?` · ${skipped} filas omitidas`:""}${rowErrors?` · ${rowErrors} fila(s) con error (ver consola)`:""}`);
+  }catch(error){
+    console.error("Error al importar CSV:",error);
+    toast("Ocurrió un error al importar el archivo. Verificá el formato del CSV y volvé a intentar.");
+  }
+}
+function downloadClientTemplate(){const content="codigo;fecha_evento;salon;tipo;homenajeado;cliente;email;whatsapp;invitados;pack_upgrades;adicionales;servicios_flex;observaciones\n43828;04/07/2026;Pilar Hotel;15;Cliente de ejemplo;Contacto;contacto@ejemplo.com;+54 9 11 1234 5678;120;(SILVER)(GOLD)(PANT);;;\n";const blob=new Blob(["\uFEFF"+content],{type:"text/csv;charset=utf-8"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="plantilla_clientes_janos.csv";a.click();URL.revokeObjectURL(a.href);}
+function escapeCsvCell(value){const text=String(value??"");return /[",\n\r]/.test(text)?`"${text.replace(/"/g,'""')}"`:text;}
+function exportRenditionsXlsx(){const rows=currentRenditionRows();if(!rows.length){toast("No hay rendiciones para exportar con estos filtros.");return;}const data=rows.map(r=>{const c=state.clients.find(x=>x.id===r.clientId);return{"Cliente":r.isManual?"Manual":(c?`#${c.code} · ${c.honoree}`:"Cliente eliminado"),"Fecha evento":dateText(renditionEventDate(r)),"Fecha trabajo":r.workDate?dateText(r.workDate):"","Salón":renditionSalon(r),"Categoría":r.category,"Trabajo":r.work,"Importe":Number(r.amount||0),"Estado":RENDITION_STATUS[r.status]||r.status,"Observaciones":r.observations||"","Cierre de período":r.periodEnd?dateText(r.periodEnd):""};});const ws=XLSX.utils.json_to_sheet(data);ws["!cols"]=[{wch:26},{wch:13},{wch:13},{wch:20},{wch:18},{wch:42},{wch:12},{wch:11},{wch:32},{wch:14}];const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,renditionViewMode==="archived"?"Archivadas":"Rendiciones");const suffix=renditionSalonFilter?renditionSalonFilter.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-z0-9]+/g,"_").replace(/^_|_$/g,"")+"_":"";XLSX.writeFile(wb,`rendiciones_${suffix}${todayIso()}.xlsx`);toast(`${rows.length} rendici\u00F3n${rows.length===1?"":"es"} exportada${rows.length===1?"":"s"} a Excel`);}
+function exportRenditionsCsv(){const rows=state.renditions.filter(r=>r.status==="pending"&&!r.archivedAt&&matchesRoleFilter(r,renditionRoleFilter)&&(!renditionCategoryFilter||r.category===renditionCategoryFilter)&&(!renditionSalonFilter||renditionSalon(r)===renditionSalonFilter));if(!rows.length){toast("No hay rendiciones pendientes para exportar.");return;}const header=["categoria","fecha","salon","trabajo","observaciones"];const lines=rows.map(r=>[r.category,dateText(renditionEventDate(r)),renditionSalon(r),r.work,r.observations||""].map(escapeCsvCell).join(","));const content=[header.join(","),...lines].join("\r\n")+"\r\n";const blob=new Blob(["\uFEFF"+content],{type:"text/csv;charset=utf-8"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`rendiciones_pendientes_${renditionSalonFilter?renditionSalonFilter.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-z0-9]+/g,"_").replace(/^_|_$/g,"")+"_":""}${todayIso()}.csv`;a.click();URL.revokeObjectURL(a.href);toast(`${rows.length} rendici\u00F3n${rows.length===1?"":"es"} exportada${rows.length===1?"":"s"}`);}
+
+function generateSelectionBat(clientId) {
+  const numerosRaw = document.getElementById(`seleccion-numeros-${clientId}`)?.value.trim();
+  const prefijoRaw = document.getElementById(`seleccion-prefijo-${clientId}`)?.value.trim().toUpperCase();
+  if (!numerosRaw) { toast("Pegá los números de selección antes de generar."); return; }
+  if (!prefijoRaw) { toast("Escribí el prefijo antes de generar."); return; }
+  // El prefijo y los números terminan como texto literal dentro de un script
+  // .bat (nombres de archivo, rutas, comandos echo). Sin sanitizar, un
+  // caracter como ", %, &, | o ^ podía romper el script o inyectar algo no
+  // intencional cuando alguien del equipo lo ejecutaba.
+  const prefijo = prefijoRaw.replace(/[^A-Z0-9_-]/g, "");
+  if (!prefijo) { toast("El prefijo solo puede tener letras, números, guiones y guión bajo."); return; }
+  const tokens = numerosRaw.replace(/[-,_./\\;|\s]+/g, ' ').trim().split(/\s+/).filter(Boolean).map(t => t.replace(/[^0-9]/g, "")).filter(Boolean);
+  if (!tokens.length) { toast("No se encontraron números válidos."); return; }
+  const bat = `@echo off
+setlocal enabledelayedexpansion
+set "LP=("
+set "RP=)"
+echo ================================================
+echo     COPIADOR DE SELECCION - ${prefijo}
+echo ================================================
+echo.
+
+set /p "ORIGEN=Pega la ruta de la carpeta con las fotos: "
+set "PREFIJO=${prefijo}"
+set "DESTINO=%USERPROFILE%\\Desktop\\SELECCION_${prefijo}"
+if not exist "%DESTINO%" mkdir "%DESTINO%"
+
+echo.
+echo Origen:  %ORIGEN%
+echo Prefijo: %PREFIJO%
+echo Destino: %DESTINO%
+echo.
+echo Copiando fotos seleccionadas...
+echo.
+
+set COUNT=0
+set MISSING=0
+
+set "TMPFILE=%TEMP%\\numeros_tmp_%RANDOM%.txt"
+(
+${tokens.map(n => `  echo ${n}`).join('\r\n')}
+) > "!TMPFILE!"
+
+for /f "usebackq tokens=* delims=" %%N in ("!TMPFILE!") do (
+  set "RAW=%%N"
+  set "RAW=!RAW: =!"
+  set "FOUND=0"
+
+  if not "!RAW!"=="" (
+    rem Saca los ceros a la izquierda como texto (NO con "set /a": cmd
+    rem interpreta cualquier numero que arranca con 0 como octal, y
+    rem numeros con 8 o 9 -como 069 u 097- tiran error directamente, mientras
+    rem que otros -como 023- se leen mal en silencio y copian el archivo
+    rem equivocado sin avisar). Se repite la resta de un cero varias veces
+    rem en vez de usar un loop con goto, que dentro de un bloque for /f
+    rem entre parentesis es poco confiable en cmd.exe.
+    set "INTNUM=!RAW!"
+    if "!INTNUM:~0,1!"=="0" if not "!INTNUM!"=="0" set "INTNUM=!INTNUM:~1!"
+    if "!INTNUM:~0,1!"=="0" if not "!INTNUM!"=="0" set "INTNUM=!INTNUM:~1!"
+    if "!INTNUM:~0,1!"=="0" if not "!INTNUM!"=="0" set "INTNUM=!INTNUM:~1!"
+    if "!INTNUM:~0,1!"=="0" if not "!INTNUM!"=="0" set "INTNUM=!INTNUM:~1!"
+
+    if exist "%ORIGEN%\\%PREFIJO%-!RAW!.jpg" (
+      copy "%ORIGEN%\\%PREFIJO%-!RAW!.jpg" "%DESTINO%\\%PREFIJO%-!RAW!.jpg" >nul
+      echo   [OK] %PREFIJO%-!RAW!.jpg
+      set /a COUNT+=1
+      set "FOUND=1"
+    )
+
+    rem Algunas carpetas nombran las fotos con el numero entre parentesis
+    rem en vez de con guion adelante. Se prueban ambos formatos, con y sin
+    rem ceros a la izquierda, antes de darla por no encontrada. Los
+    rem parentesis se arman con variables (LP y RP) en vez de escribirlos
+    rem literal aca adentro, porque un parentesis suelto dentro de un
+    rem bloque if rompe la sintaxis del .bat en Windows.
+    if "!FOUND!"=="0" (
+      if exist "%ORIGEN%\\%PREFIJO% !LP!!RAW!!RP!.jpg" (
+        copy "%ORIGEN%\\%PREFIJO% !LP!!RAW!!RP!.jpg" "%DESTINO%\\%PREFIJO% !LP!!RAW!!RP!.jpg" >nul
+        echo   [OK] %PREFIJO% !LP!!RAW!!RP!.jpg
+        set /a COUNT+=1
+        set "FOUND=1"
+      )
+    )
+
+    if "!FOUND!"=="0" (
+      if exist "%ORIGEN%\\%PREFIJO%-!INTNUM!.jpg" (
+        copy "%ORIGEN%\\%PREFIJO%-!INTNUM!.jpg" "%DESTINO%\\%PREFIJO%-!INTNUM!.jpg" >nul
+        echo   [OK] %PREFIJO%-!INTNUM!.jpg
+        set /a COUNT+=1
+        set "FOUND=1"
+      )
+    )
+
+    if "!FOUND!"=="0" (
+      if exist "%ORIGEN%\\%PREFIJO% !LP!!INTNUM!!RP!.jpg" (
+        copy "%ORIGEN%\\%PREFIJO% !LP!!INTNUM!!RP!.jpg" "%DESTINO%\\%PREFIJO% !LP!!INTNUM!!RP!.jpg" >nul
+        echo   [OK] %PREFIJO% !LP!!INTNUM!!RP!.jpg
+        set /a COUNT+=1
+        set "FOUND=1"
+      )
+    )
+
+    if "!FOUND!"=="0" (
+      echo   [!!] NO ENCONTRADA: %PREFIJO%-!RAW!.jpg / %PREFIJO% !LP!!RAW!!RP!.jpg
+      set /a MISSING+=1
+    )
+  )
+)
+
+if exist "!TMPFILE!" del "!TMPFILE!"
+
+echo.
+echo ================================================
+echo  Fotos copiadas:  !COUNT!
+echo  No encontradas:  !MISSING!
+echo  Carpeta destino: %DESTINO%
+echo ================================================
+echo.
+pause
+endlocal`;
+
+  const blob = new Blob([bat], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `COPIAR_SELECCION_${prefijo}.bat`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast(`Script generado: COPIAR_SELECCION_${prefijo}.bat`);
+}
+
+function openClientDetail(id) {
+  const c=state.clients.find(x=>x.id===id); if(!c)return; const phases=[...new Set(c.tasks.map(t=>t.phase))];
+  document.getElementById("clientDetail").innerHTML=`<div class="detail-wrap"><div class="detail-title"><div><p class="eyebrow">#${escapeHtml(c.code)} · ${escapeHtml(c.salon)}</p><h2>${escapeHtml(c.honoree)}</h2><p>${dateText(c.eventDate)} · ${packLabel(c.pack)} · ${escapeHtml(c.type)}</p></div><div class="detail-title-actions"><button class="icon-btn" type="button" data-copy-group-desc="${c.id}" title="Copiar descripción para el grupo de WhatsApp">📋</button><button class="icon-btn" data-close-detail>×</button></div></div><div class="detail-summary"><div class="summary-box"><span>Progreso</span><strong>${progress(c)}%</strong></div><div class="summary-box"><span>Cliente</span><strong>${escapeHtml(c.clientName||"Sin informar")}</strong></div><div class="summary-box"><span>Invitados</span><strong>${c.guests||"-"}</strong></div><div class="summary-box"><span>Para rendir</span><strong>${c.tasks.filter(t=>t.payable&&t.status==="done").length}</strong></div></div><div class="photo-session-panel"><div><span>Sesión de fotos</span><strong>${escapeHtml(photoSessionSummary(c))}</strong></div>${photoSessionButtonHtml(c)}${c.photoSession?.date?`<button class="ghost-btn" data-cancel-session="${c.id}">Quitar sesión</button>`:""}</div>${c.isExternal?"":speechPanelHtml(c)}<details class="photo-selection-panel"><summary class="panel-head photo-selection-summary"><div class="summary-left"><h3>Selección de fotos</h3><small>Generá un script para copiar las fotos elegidas por el cliente</small></div><span class="collapse-icon">▶</span></summary><div class="panel-body"><div class="photo-selection-fields"><label class="photo-selection-label">Números seleccionados<textarea id="seleccion-numeros-${c.id}" class="photo-selection-textarea" placeholder="Ej: 10, 11, 16, 20, 31..." rows="4"></textarea></label><label class="photo-selection-label">Prefijo de archivo<input id="seleccion-prefijo-${c.id}" class="photo-selection-input" type="text" placeholder="Ej: GARCIA" maxlength="40"></label></div><div class="modal-actions" style="margin-top:0.75rem"><button class="primary-btn" data-generate-bat="${c.id}">Descargar script</button></div></div></details>${phases.map(p=>`<h3 class="phase-title">${p}</h3>${c.tasks.filter(t=>t.phase===p).map(t=>taskRow(c,t)).join("")}`).join("")}<div class="modal-actions"><button class="danger-btn" data-delete-client="${c.id}">Eliminar</button><button class="whatsapp-btn ${!c.clientPhone?"missing":c.contactedAt?"contacted":""}" type="button" data-contact-client="${c.id}">${!c.clientPhone?"Agregar WhatsApp":c.contactedAt?`<span>Contactado</span><small>${dateText(isoDate(c.contactedAt))}</small>`:"Contactar"}</button><button class="whatsapp-btn ${!c.whatsappGroupUrl?"missing":""}" type="button" data-whatsapp-group="${c.id}">${c.whatsappGroupUrl?"Grupo WhatsApp":"Agregar grupo"}</button>${!c.driveUrl&&driveAutoAvailable(c.salon)?`<button class="drive-btn missing" type="button" data-create-drive-folder="${c.id}">Crear carpeta en Drive</button>`:`<button class="drive-btn ${!c.driveUrl?"missing":""}" type="button" data-drive-folder="${c.id}">${c.driveUrl?"Ver Drive":"Agregar Drive"}</button>`}<button class="email-btn ${!c.driveUrl||!c.clientEmail?"missing":c.linkSentAt?"sent":""}" type="button" data-send-email="${c.id}">${!c.driveUrl||!c.clientEmail?"Falta Drive/Email":c.linkSentAt?`<span>Reenviar material</span><small>Material enviado ${dateText(isoDate(c.linkSentAt))}</small>`:"Enviar material"}</button><button class="secondary-btn" data-edit-client="${c.id}">Editar ficha</button><button class="primary-btn" data-close-detail>Cerrar</button></div></div>`;
+  const dialog=document.getElementById("detailDialog"); if(!dialog.open)dialog.showModal();
+}
+function taskRow(c,t){
+  const needsOrder=t.key==="partyBook";
+  const viaticoBtn=t.key==="sansSouciViatico"?`<button type="button" class="ghost-btn" data-calc-viatico="${c.id}|${t.id}">Calcular viático</button>`:"";
+  // Solo estético: en la tarea de coordinar la sesión, cuando ya está agendada
+  // (fecha cargada), la fecha se tiñe del color del salón (mismo look que el
+  // tag de salón en el dashboard) para distinguir Quinta/Pilar Hotel de un vistazo.
+  const sessionDateClass=(t.key==="coordinateSession"&&t.completedAt)?` session-date-tag${salonTagClass(c.salon)}`:"";
+  return `<div class="task-row ${t.status==="done"?"done":""}"><input class="task-check" type="checkbox" data-task-check="${c.id}|${t.id}" ${t.status==="done"?"checked":""} ${t.status==="na"?"disabled":""}><div class="task-title"><strong>${escapeHtml(t.title)}</strong>${t.payable?`<small>Genera rendición: ${escapeHtml(t.category)} → ${escapeHtml(t.work)} · ${money(getRate(t.rateKey,c.eventDate))}</small>`:""}</div><select data-task-status="${c.id}|${t.id}">${Object.entries(STATUS_LABELS).map(([k,v])=>`<option value="${k}" ${t.status===k?"selected":""}>${v}</option>`).join("")}</select><input type="date" class="${sessionDateClass.trim()}" data-task-date="${c.id}|${t.id}" value="${isoDate(t.completedAt)}" title="Fecha real del trabajo"><input data-task-responsible="${c.id}|${t.id}" value="${escapeHtml(t.responsible)}" placeholder="Responsable"><input data-task-notes="${c.id}|${t.id}" value="${escapeHtml(t.notes)}" placeholder="${needsOrder?"N° pedido laboratorio":"Observaciones"}">${viaticoBtn}</div>`;
+}
+function refreshTaskViews(clientId){const dialog=document.getElementById("detailDialog");if(dialog.open)openClientDetail(clientId);else if(activeView==="tasks")renderTasks();}
+function updateTask(clientId,taskId,status){const c=state.clients.find(x=>x.id===clientId),t=c?.tasks.find(x=>x.id===taskId);if(!t)return;if(status==="done"&&t.key==="partyBook"&&!t.notes.trim()){toast("Ingresá el número de pedido del laboratorio antes de terminar esta tarea.");refreshTaskViews(c.id);return;}t.status=status;if(status==="done"&&!t.completedAt)t.completedAt=todayIso();if(status!=="done")t.completedAt="";const existing=state.renditions.find(r=>r.taskId===t.id);const amount=getRate(t.rateKey,c.eventDate);let removedRendition=false;if(status==="done"&&t.payable&&!existing){const workDate=isoDate(t.completedAt)||todayIso();state.renditions.push({id:uid(),clientId:c.id,taskId:t.id,category:t.category,work:t.work,amount,status:"pending",createdAt:new Date().toISOString(),workDate,periodEnd:periodEndFor(workDate),observations:t.notes||""});}if(status!=="done"&&existing?.status==="pending"){state.renditions=state.renditions.filter(r=>r.id!==existing.id);removedRendition=true;}saveState();refreshTaskViews(c.id);
+  // Mensaje distinto por cada transición para que se note el cambio,
+  // sobre todo al destildar (antes decía siempre "Tarea actualizada" para
+  // cualquier estado que no fuera "done", y pasaba desapercibido).
+  let msg="Tarea actualizada";
+  if(status==="done")msg=t.payable?"Tarea terminada y rendición agregada":"Tarea terminada";
+  else if(status==="pending")msg=removedRendition?"Tarea marcada como pendiente y rendición quitada":"Tarea marcada como pendiente";
+  toast(msg);
+}
+
+function deleteClient(id){state.clients=state.clients.filter(c=>c.id!==id);state.renditions=state.renditions.filter(r=>r.clientId!==id);const detail=document.getElementById("detailDialog"),form=document.getElementById("clientDialog");if(detail.open)detail.close();if(form.open)form.close();saveState();toast("Cliente y registros vinculados eliminados");}
+
+function runGlobalSearch(query) {
+  const box = document.getElementById("globalSearchResults");
+  const q = query.trim().toLowerCase();
+  if (q.length < 2) { box.classList.add("hidden"); box.innerHTML = ""; return; }
+  const results = [];
+
+  // Clientes: por nombre, código o salón
+  state.clients.forEach(c => {
+    const haystack = `${c.honoree} ${c.code} ${c.salon} ${c.clientName||""}`.toLowerCase();
+    if (haystack.includes(q)) {
+      results.push({
+        type: "cliente",
+        label: c.honoree,
+        sub: `#${c.code} · ${c.salon} · ${dateText(c.eventDate)}`,
+        action: () => { setView("clients"); openClientDetail(c.id); }
+      });
+    }
+  });
+
+  // Tareas pendientes: por título de tarea o nombre del cliente
+  state.clients.forEach(c => {
+    c.tasks.forEach(t => {
+      if (t.status === "done" || t.status === "na") return;
+      const haystack = `${t.title} ${c.honoree}`.toLowerCase();
+      if (haystack.includes(q)) {
+        results.push({
+          type: "tarea",
+          label: t.title,
+          sub: `${c.honoree} · #${c.code}`,
+          action: () => { setView("clients"); openClientDetail(c.id); }
+        });
+      }
+    });
+  });
+
+  // Rendiciones: por trabajo, categoría o cliente asociado
+  state.renditions.forEach(r => {
+    const c = state.clients.find(x => x.id === r.clientId);
+    const haystack = `${r.work} ${r.category} ${c?.honoree||r.salon||""}`.toLowerCase();
+    if (haystack.includes(q)) {
+      results.push({
+        type: "rendición",
+        label: r.work,
+        sub: `${c?.honoree || r.salon || "Sin evento"} · ${money(r.amount)}`,
+        action: () => { setView("renditions"); }
+      });
+    }
+  });
+
+  if (!results.length) {
+    box.innerHTML = `<div class="global-search-empty">Sin resultados para "${escapeHtml(query)}"</div>`;
+    box.classList.remove("hidden");
+    return;
+  }
+
+  box.innerHTML = results.slice(0, 12).map((r, i) => `
+    <button type="button" class="global-search-item" data-search-result="${i}">
+      <span class="global-search-type">${r.type}</span>
+      <span class="global-search-label">${escapeHtml(r.label)}</span>
+      <span class="global-search-sub">${escapeHtml(r.sub)}</span>
+    </button>
+  `).join("");
+  box.classList.remove("hidden");
+  window._globalSearchResults = results;
+}
+function closeGlobalSearch() {
+  const box = document.getElementById("globalSearchResults");
+  box.classList.add("hidden");
+  box.innerHTML = "";
+  document.getElementById("globalSearch").value = "";
+}
+
+function setView(view){activeView=view;document.querySelectorAll(".view").forEach(v=>v.classList.toggle("active",v.id===`${view}View`));document.querySelectorAll(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.view===view));const meta={dashboard:["Resumen operativo","Inicio"],clients:["Gestión de eventos","Clientes"],calendar:["Vista mensual","Calendario"],tasks:["Pendientes por rol","Tareas"],renditions:["Trabajos realizados","Rendiciones"],settings:["Reglas y valores","Configuración"],users:["Administración","Usuarios"]}[view];document.getElementById("viewEyebrow").textContent=meta[0];document.getElementById("viewTitle").textContent=meta[1];document.getElementById("newClientBtn").classList.toggle("hidden",view==="users"||view==="tasks"||view==="renditions");
+const manualBtn=document.getElementById("manualRenditionBtn");if(manualBtn)manualBtn.style.display=view==="renditions"?"":"none";document.querySelector(".sidebar").classList.remove("open");
+if(view==="calendar"&&!gcalLoading)fetchGcalEvents(calendarMonth);}
+function toast(msg,duration=2600){const el=document.getElementById("toast");const openDialog=document.querySelector("dialog[open]");(openDialog||document.body).appendChild(el);el.textContent=msg;el.classList.add("show");clearTimeout(toast.timer);toast.timer=setTimeout(()=>el.classList.remove("show"),duration);}
+
+document.addEventListener("click", e => {
+  const renditionRowsEl=document.getElementById("renditionRows");
+  if(renditionRowsEl){
+    const clickedRow=e.target.closest(".rendition-row:not(.header)");
+    if(renditionRowsEl.contains(e.target)&&clickedRow&&!e.target.closest("input, select, button, a")){
+      const rowId=clickedRow.dataset.renditionRow;
+      if(rowId&&highlightedRenditionId!==rowId){highlightedRenditionId=rowId;renditionRowsEl.innerHTML=renditionRows(currentRenditionRows());}
+    } else if(!renditionRowsEl.contains(e.target)&&highlightedRenditionId){
+      highlightedRenditionId=null;renditionRowsEl.innerHTML=renditionRows(currentRenditionRows());
+    }
+  }
+  if(e.target.id==="reloadForConflict"){forceRetrySync();return;}
+  if(e.target.id==="calGcalConnect"){connectGoogleCalendar();return;}
+  if(e.target.id==="calGcalOpen"){window.open("https://calendar.google.com","janosExternal","noopener,noreferrer");return;}
+  if(e.target.id==="calGcalRefresh"){gcalEvents=[];fetchGcalEvents(calendarMonth);return;}
+  if(e.target.id==="calPrev"){calendarMonth=shiftMonth(calendarMonth,-1);fetchGcalEvents(calendarMonth);renderCalendar();return;}
+  if(e.target.id==="calNext"){calendarMonth=shiftMonth(calendarMonth,1);fetchGcalEvents(calendarMonth);renderCalendar();return;}
+
+  if(e.target.id==="calToday"){calendarMonth=todayIso().slice(0,7);renderCalendar();return;}
+  const nav=e.target.closest("[data-view]"); if(nav)setView(nav.dataset.view);
+  const go=e.target.closest("[data-go]"); if(go)setView(go.dataset.go);
+  const clientView=e.target.closest("[data-client-view]");if(clientView){clientViewMode=clientView.dataset.clientView;renderClients();}
+  const taskRoleBtn=e.target.closest("[data-task-role]");if(taskRoleBtn)setTaskRoleFilter(taskRoleBtn.dataset.taskRole);
+  const renditionView=e.target.closest("[data-rendition-view]");if(renditionView){renditionViewMode=renditionView.dataset.renditionView;selectedRenditionIds.clear();renderRenditions();}
+  const renditionRoleBtn=e.target.closest("[data-rendition-role]");if(renditionRoleBtn){renditionRoleFilter=renditionRoleBtn.dataset.renditionRole;localStorage.setItem("janosRenditionRole",renditionRoleFilter);selectedRenditionIds.clear();renderRenditions();}
+  const open=e.target.closest("[data-open-client]"); if(open)openClientDetail(open.dataset.openClient);
+  const contact=e.target.closest("[data-contact-client]");if(contact)contactClient(contact.dataset.contactClient);
+  const whatsappGroup=e.target.closest("[data-whatsapp-group]");if(whatsappGroup)openWhatsappGroup(whatsappGroup.dataset.whatsappGroup);
+  const sendSpeechBtn=e.target.closest("[data-send-speech]");if(sendSpeechBtn){const [clientId,speechKey]=sendSpeechBtn.dataset.sendSpeech.split("|");sendSpeech(clientId,speechKey);}
+  const driveFolder=e.target.closest("[data-drive-folder]");if(driveFolder)openDriveFolder(driveFolder.dataset.driveFolder);
+  const createDrive=e.target.closest("[data-create-drive-folder]");if(createDrive)createDriveFolder(createDrive.dataset.createDriveFolder);
+  const sendEmail=e.target.closest("[data-send-email]");if(sendEmail)sendDriveEmail(sendEmail.dataset.sendEmail);
+  const calcViatico=e.target.closest("[data-calc-viatico]");if(calcViatico){const [clientId,taskId]=calcViatico.dataset.calcViatico.split("|");calculateSansSouciViatico(clientId,taskId,calcViatico);}
+  const photoSession=e.target.closest("[data-photo-session]");if(photoSession){const detail=document.getElementById("detailDialog");const wasDetailOpen=detail.open;if(wasDetailOpen)detail.close();openPhotoSessionForm(photoSession.dataset.photoSession, wasDetailOpen?photoSession.dataset.photoSession:null);}
+  const cancelSession=e.target.closest("[data-cancel-session]");if(cancelSession&&confirm("¿Quitar la sesión de fotos agendada?")){const c=state.clients.find(x=>x.id===cancelSession.dataset.cancelSession);if(c){c.photoSession=null;const _ct=c.tasks.find(t=>t.key==="coordinateSession");if(_ct&&_ct.status==="done"){_ct.status="pending";_ct.completedAt="";}c.history=c.history||[];c.history.push({date:new Date().toISOString(),text:"Sesión de fotos cancelada",type:"photo_session_cancel"});saveState();openClientDetail(c.id);toast("Sesión de fotos quitada");}}
+  if(e.target.closest("[data-session-cal-prev]")){sessionPicker.m--;if(sessionPicker.m<0){sessionPicker.m=11;sessionPicker.y--;}renderSessionPicker();return;}
+  if(e.target.closest("[data-session-cal-next]")){sessionPicker.m++;if(sessionPicker.m>11){sessionPicker.m=0;sessionPicker.y++;}renderSessionPicker();return;}
+  const sessionDay=e.target.closest("[data-session-day]");if(sessionDay){const nd=sessionDay.dataset.sessionDay;if(sessionPicker.date!==nd){sessionPicker.salon="";sessionPicker.time="";sessionPicker.customMode=false;sessionPicker.customTimeMode=false;}sessionPicker.date=nd;renderSessionPicker();return;}
+  const sessionSalon=e.target.closest("[data-session-salon]");if(sessionSalon){if(sessionPicker.salon!==sessionSalon.dataset.sessionSalon)sessionPicker.time="";sessionPicker.salon=sessionSalon.dataset.sessionSalon;sessionPicker.customMode=false;sessionPicker.customTimeMode=false;renderSessionPicker();return;}
+  const sessionCustomSalon=e.target.closest("[data-session-custom]");if(sessionCustomSalon){sessionPicker.customMode=true;if(SESSION_SALONS.includes(sessionPicker.salon))sessionPicker.salon="";sessionPicker.time="";sessionPicker.customTimeMode=false;renderSessionPicker();return;}
+  const sessionSlot=e.target.closest("[data-session-slot]");if(sessionSlot){sessionPicker.time=sessionSlot.dataset.sessionSlot;sessionPicker.customTimeMode=false;renderSessionPicker();return;}
+  const sessionCustomTime=e.target.closest("[data-session-time-custom]");if(sessionCustomTime){sessionPicker.customTimeMode=true;if(SESSION_SLOTS.includes(sessionPicker.time))sessionPicker.time="";renderSessionPicker();return;}
+  const dismissConflict=e.target.closest("[data-dismiss-conflict]");if(dismissConflict){const c=state.clients.find(x=>x.id===dismissConflict.dataset.dismissConflict);if(c){const key=dismissConflict.dataset.conflictKey||"general";c.dismissedConflicts=c.dismissedConflicts||{};c.dismissedConflicts[key]=true;c.history=c.history||[];c.history.push({date:new Date().toISOString(),text:"Alerta de conflicto marcada como resuelta manualmente",type:"conflict_dismissed"});saveState();renderDashboard();toast("Alerta ocultada. Podés reactivarla si el conflicto real cambia editando la ficha.");}}
+  const userStatus=e.target.closest("[data-user-status]");if(userStatus)changeUserStatus(userStatus.dataset.userStatus,userStatus.dataset.nextStatus);
+  const deleteUserBtn=e.target.closest("[data-delete-user]");if(deleteUserBtn)deleteUserAccount(deleteUserBtn.dataset.deleteUser);
+  const edit=e.target.closest("[data-edit-client]"); if(edit){const detail=document.getElementById("detailDialog");const wasDetailOpen=detail.open;if(wasDetailOpen)detail.close();openClientForm(state.clients.find(c=>c.id===edit.dataset.editClient), wasDetailOpen?edit.dataset.editClient:null);}
+  const copyGroupDescBtn=e.target.closest("[data-copy-group-desc]");if(copyGroupDescBtn)copyGroupDescription(copyGroupDescBtn.dataset.copyGroupDesc);
+  if(e.target.closest("[data-close-detail]"))document.getElementById("detailDialog").close();
+  if(e.target.closest("[data-close-client-form]"))document.getElementById("clientDialog").close();
+  if(e.target.closest("[data-close-photo-session]"))document.getElementById("photoSessionDialog").close();
+  const generateBat=e.target.closest("[data-generate-bat]");if(generateBat)generateSelectionBat(generateBat.dataset.generateBat);
+  const del=e.target.closest("[data-delete-client]"); if(del&&confirm("¿Eliminar este cliente, sus tareas y todas sus rendiciones?"))deleteClient(del.dataset.deleteClient);
+  if(e.target.id==="renditionBulkArchive")bulkArchiveRenditions();
+  if(e.target.id==="renditionBulkRestore")bulkRestoreRenditions();
+  if(e.target.id==="renditionBulkDelete")bulkDeleteRenditions();
+  if(e.target.id==="renditionBulkClear"){selectedRenditionIds.clear();renderRenditions();}
+  const archive=e.target.closest("[data-archive-rendition]");if(archive)archiveRendition(archive.dataset.archiveRendition);
+  const restore=e.target.closest("[data-restore-rendition]");if(restore)restoreRendition(restore.dataset.restoreRendition);
+  const deleteWork=e.target.closest("[data-delete-rendition]");if(deleteWork&&confirm("¿Eliminar definitivamente esta rendición? La tarea del cliente se conservará."))deleteRendition(deleteWork.dataset.deleteRendition);
+  if(e.target.id==="deleteClientFromForm"){const id=document.getElementById("clientForm").elements.id.value;if(id&&confirm("¿Eliminar este cliente, sus tareas y todas sus rendiciones?"))deleteClient(id);}
+  if(e.target.id==="resetContactBtn"){const id=document.getElementById("clientForm").elements.id.value;if(id&&confirm("¿Deshacer la marca de contacto inicial de este cliente?"))resetClientContact(id);}
+  if(e.target.id==="saveRates"){document.querySelectorAll("[data-rate]").forEach(i=>state.rates[i.dataset.rate]=Number(i.value||0));saveState();toast("Tarifas actualizadas");}
+  if(e.target.id==="saveWhatsappTemplate")saveWhatsappSenders();
+  if(e.target.id==="addWhatsappSender")addWhatsappSender();
+  const deleteSender=e.target.closest("[data-delete-sender]");if(deleteSender)deleteWhatsappSender(deleteSender.dataset.deleteSender);
+  const resetType=e.target.closest("[data-reset-type]");if(resetType){const key=resetType.dataset.resetType;const def=WHATSAPP_TYPE_TEMPLATES.find(t=>t.key===key)?.default||DEFAULT_WHATSAPP_TEMPLATE;const field=document.querySelector(`[data-type-template="${CSS.escape(key)}"]`);if(field)field.value=def;}
+  if(e.target.id==="saveSpeechTemplates")saveSpeechTemplates();
+  const resetSpeech=e.target.closest("[data-reset-speech]");if(resetSpeech){const key=resetSpeech.dataset.resetSpeech;const def=SPEECH_TYPES.find(s=>s.key===key)?.default||"";const field=document.querySelector(`[data-speech-template="${CSS.escape(key)}"]`);if(field)field.value=def;}
+  const saveZoho=e.target.closest("[data-save-zoho]");if(saveZoho)saveZohoAccount(saveZoho.dataset.saveZoho);
+  const clearZoho=e.target.closest("[data-clear-zoho]");if(clearZoho)clearZohoAccount(clearZoho.dataset.clearZoho);
+  const connectDrive_=e.target.closest("[data-connect-drive]");if(connectDrive_)connectDrive(connectDrive_.dataset.connectDrive);
+  const saveDriveRoot_=e.target.closest("[data-save-drive-root]");if(saveDriveRoot_)saveDriveRoot(saveDriveRoot_.dataset.saveDriveRoot);
+  const clearDrive_=e.target.closest("[data-clear-drive]");if(clearDrive_)clearDrive(clearDrive_.dataset.clearDrive);
+  const refreshDrive_=e.target.closest("#refreshDriveAccounts");if(refreshDrive_)refreshDriveAccounts();
+  const togglePwd=e.target.closest("[data-toggle-password]");if(togglePwd){const input=document.getElementById(togglePwd.dataset.togglePassword);if(input){const show=input.type==="password";input.type=show?"text":"password";togglePwd.textContent=show?"🙈":"👁";togglePwd.setAttribute("aria-label",show?"Ocultar contraseña":"Mostrar contraseña");}}
+  if(e.target.id==="downloadClientTemplate")downloadClientTemplate();
+  if(e.target.id==="exportRenditionsCsv")exportRenditionsCsv();
+  if(e.target.id==="exportRenditionsXlsx")exportRenditionsXlsx();
+  if(e.target.id==="importClientsBtn")document.getElementById("clientCsvInput")?.click();
+  if(e.target.id==="exportBackup"){const blob=new Blob([JSON.stringify(state,null,2)],{type:"application/json"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`janos-control-${new Date().toISOString().slice(0,10)}.json`;a.click();URL.revokeObjectURL(a.href);}
+  if(e.target.id==="regenerateTasks"){const atRisk=tasksAtRiskOnRegenerate();const warning=atRisk.length?`\n\nATENCIÓN: ${atRisk.length} tarea(s) con progreso cargado se van a eliminar porque ya no corresponden a las tareas actuales:\n${atRisk.slice(0,8).map(({c,t})=>`- ${c.honoree} #${c.code}: "${t.title}" (${STATUS_LABELS[t.status]||t.status})`).join("\n")}${atRisk.length>8?`\n…y ${atRisk.length-8} más.`:""}`:"";if(confirm(`¿Regenerar las tareas de todos los clientes? Se conservará el progreso de las tareas vigentes.${warning}`)){state.clients.forEach(c=>syncTasks(c));saveState();toast(`Tareas regeneradas para ${state.clients.length} clientes${atRisk.length?` · ${atRisk.length} obsoletas eliminadas`:""}`);}}
+  if(e.target.id==="clearData"){const account=currentUser?.email||"modo local";if(confirm(`Esto va a BORRAR todos los clientes, tareas y rendiciones de la cuenta ${account}, incluida la copia en la nube. Esta acción no se puede deshacer.\n\n¿Confirmás que querés borrar todo?`)){approveMassDeletion();state=initialState();saveState();toast("Datos eliminados de esta cuenta");}}
+});
+document.addEventListener("change", e => {
+  if(e.target.matches('[name="addons"][value="miniflex"], [name="addons"][value="flex"]')&&e.target.checked){const other=e.target.value==="flex"?"miniflex":"flex";const otherInput=document.querySelector(`[name="addons"][value="${other}"]`);if(otherInput)otherInput.checked=false;}
+  if(e.target.matches('[name="flexServices"]')&&e.target.checked){const checkedAddons=[...document.querySelectorAll('[name="addons"]:checked')].map(x=>x.value),limit=checkedAddons.includes("flex")?5:checkedAddons.includes("miniflex")?2:0,count=countFlexSlots([...document.querySelectorAll('[name="flexServices"]:checked')].map(x=>x.value));if(limit&&count>limit){e.target.checked=false;toast(`Ya elegiste el máximo de ${limit} servicios para ${limit===2?"Mini Flex":"Flex"}.`);}}
+  if(e.target.matches('[name="addons"], [name="flexServices"]'))updateFlexField();
+  if(e.target.dataset.taskStatus){const [c,t]=e.target.dataset.taskStatus.split("|");updateTask(c,t,e.target.value);}
+  if(e.target.dataset.taskResponsible){const [c,t]=e.target.dataset.taskResponsible.split("|");const task=state.clients.find(x=>x.id===c)?.tasks.find(x=>x.id===t);if(task){task.responsible=e.target.value;saveState();}}
+  if(e.target.dataset.taskDate){const [c,t]=e.target.dataset.taskDate.split("|"),task=state.clients.find(x=>x.id===c)?.tasks.find(x=>x.id===t);if(task){task.completedAt=e.target.value;const rendition=state.renditions.find(r=>r.taskId===task.id);if(rendition&&e.target.value){rendition.workDate=e.target.value;rendition.periodEnd=periodEndFor(e.target.value);}saveState();}}
+  if(e.target.dataset.taskNotes){const [c,t]=e.target.dataset.taskNotes.split("|"),task=state.clients.find(x=>x.id===c)?.tasks.find(x=>x.id===t);if(task){task.notes=e.target.value;const rendition=state.renditions.find(r=>r.taskId===task.id);if(rendition)rendition.observations=e.target.value;saveState();}}
+  if(e.target.dataset.renditionStatus){const r=state.renditions.find(x=>x.id===e.target.dataset.renditionStatus);if(r){r.status=e.target.value;saveState();toast("Estado de rendición actualizado");}}
+  if(e.target.dataset.renditionSelect)toggleRenditionSelect(e.target.dataset.renditionSelect,e.target.checked);
+  if(e.target.id==="renditionSelectAll")toggleRenditionSelectAll(e.target.checked);
+  if(e.target.name==="whatsappActiveSenderPick"){localStorage.setItem("janosActiveSender",e.target.value);toast("Este dispositivo va a firmar como ese remitente de acá en más");}
+
+  if(e.target.id==="renditionFilter"||e.target.id==="renditionCategoryFilter"||e.target.id==="renditionSalonFilter")filterRenditions();
+  if(e.target.id==="taskSalonFilter")setTaskSalonFilter(e.target.value);
+  if(e.target.id==="calendarSalonFilter"){calendarSalonFilter=e.target.value;localStorage.setItem("janosCalendarSalon",calendarSalonFilter);renderCalendar();}
+  if(["clientSalonFilter","clientMonthFilter","clientPackFilter","clientAddonFilter"].includes(e.target.id))filterClients();
+  if(e.target.id==="importBackup"){const input=e.target,file=input.files[0];if(file){file.text().then(text=>{let parsed;try{parsed=JSON.parse(text);}catch{toast("El archivo no es una copia válida");input.value="";return;}if(!Array.isArray(parsed.clients)||parsed.clients.some(c=>!c||!Array.isArray(c.tasks))){const esBackupDiario=Array.isArray(parsed?.profiles)&&Array.isArray(parsed?.tasks);alert(esBackupDiario?"Ese archivo es el backup diario que llega por mail (formato de base de datos), no una copia exportada desde la app. Este botón solo acepta copias generadas con \"Exportar copia JSON\".":"El archivo no tiene el formato de una copia de Janos Control.");input.value="";return;}if(!confirm("Esto va a REEMPLAZAR todos los clientes, tareas y rendiciones actuales (y en la nube) por los de esta copia. Los datos cargados desde que se hizo esta copia se van a perder. Esta acción no se puede deshacer.\n\n¿Confirmás que querés continuar?")){input.value="";return;}approveMassDeletion();state={...initialState(),...parsed,rates:{...BASE_RATES,...(parsed.rates||{})}};saveState();toast("Copia importada");input.value="";});}}
+  if(e.target.id==="clientCsvInput"&&e.target.files[0])importClientCsv(e.target.files[0]).finally(()=>{e.target.value="";});
+});
+document.addEventListener("input",e=>{if(e.target.id==="clientSearch")filterClients();if(e.target.id==="taskSearch")filterTasks();if(e.target.id==="sessionCustomLocation"){sessionPicker.salon=e.target.value;updateSessionDerived();}if(e.target.id==="sessionCustomTime"){sessionPicker.time=e.target.value;syncSessionFormFields();}});
+document.addEventListener("change",e=>{if(e.target.dataset.taskCheck){const[c,t]=e.target.dataset.taskCheck.split("|");if(!e.target.checked&&!confirm("¿Marcar esta tarea como pendiente de nuevo? Si había generado una rendición, se va a quitar.")){e.target.checked=true;return;}updateTask(c,t,e.target.checked?"done":"pending");}});
+function filterClients(){const q=(document.getElementById("clientSearch")?.value||"").toLowerCase(),salon=document.getElementById("clientSalonFilter")?.value||"",month=document.getElementById("clientMonthFilter")?.value||"",pack=document.getElementById("clientPackFilter")?.value||"",addon=document.getElementById("clientAddonFilter")?.value||"";clientFilters={search:q,salon,month,pack,addon};const filtered=state.clients.filter(c=>(clientViewMode==="archived"?isPastEvent(c):!isPastEvent(c))&&(!salon||c.salon===salon)&&(!month||monthKey(c.eventDate)===month)&&(!pack||c.pack===pack)&&(!addon||(c.addons||[]).includes(addon))&&[c.honoree,c.clientName,c.code].some(v=>String(v||"").toLowerCase().includes(q)));document.getElementById("clientGrid").innerHTML=clientCards(filtered);const count=document.getElementById("clientResultCount");if(count)count.textContent=eventCountLabel(filtered.length);}
+function filterRenditions(){renditionStatusFilter=document.getElementById("renditionFilter")?.value||"";renditionCategoryFilter=document.getElementById("renditionCategoryFilter")?.value||"";renditionSalonFilter=document.getElementById("renditionSalonFilter")?.value||"";selectedRenditionIds.clear();const filtered=currentRenditionRows();document.getElementById("renditionRows").innerHTML=renditionRows(filtered);updateRenditionTotal(filtered);updateRenditionBulkBar(filtered);}
+document.getElementById("newClientBtn").addEventListener("click",()=>openClientForm());
+document.getElementById("manualRenditionBtn").addEventListener("click",()=>openManualRenditionDialog());
+
+document.getElementById("mobileMenu").addEventListener("click",()=>document.querySelector(".sidebar").classList.toggle("open"));
+document.getElementById("clientForm").addEventListener("submit",e=>{e.preventDefault();if(saveClient(e.currentTarget))document.getElementById("clientDialog").close();});
+// Si el form de cliente se abrió desde "Editar ficha" (lo que cierra la ficha
+// principal, ver openClientForm/clientFormReopenDetailId más arriba), acá
+// volvemos a abrir esa ficha sin importar CÓMO se haya cerrado el form:
+// guardando (submit → close()), con "Cancelar"/la X (data-close-client-form →
+// close()), clickeando el fondo (closeDialogOnBackdropClick → close()) o con
+// ESC (el <dialog> nativo dispara "close" solo). Antes solo se reabría en el
+// submit, así que cancelar sin guardar dejaba todo cerrado.
+document.getElementById("clientDialog").addEventListener("close",()=>{
+  if(clientFormReopenDetailId){
+    const id=clientFormReopenDetailId;
+    clientFormReopenDetailId=null;
+    openClientDetail(id);
+  }
+});
+// Cerrar el diálogo al clickear el fondo (fuera del contenido), pero solo si
+// el click "empezó y terminó" en el fondo. Antes se chequeaba únicamente el
+// target del click, así que arrastrar el mouse para seleccionar texto adentro
+// del diálogo y soltar sobre el fondo (o afuera de la ventana) disparaba un
+// click con target=diálogo y lo cerraba solo, perdiendo la selección.
+function closeDialogOnBackdropClick(dialog){
+  let downOnBackdrop=false;
+  dialog.addEventListener("mousedown",e=>{downOnBackdrop=(e.target===dialog);});
+  dialog.addEventListener("click",e=>{if(downOnBackdrop&&e.target===dialog)dialog.close();downOnBackdrop=false;});
+}
+closeDialogOnBackdropClick(document.getElementById("clientDialog"));
+closeDialogOnBackdropClick(document.getElementById("detailDialog"));
+closeDialogOnBackdropClick(document.getElementById("photoSessionDialog"));
+document.getElementById("photoSessionForm").addEventListener("submit",e=>{e.preventDefault();if(savePhotoSession(e.currentTarget))document.getElementById("photoSessionDialog").close();});
+// Igual que con clientDialog: reabrir la ficha principal pase lo que pase
+// (guardar, cancelar, click afuera, ESC), usando el evento nativo "close".
+document.getElementById("photoSessionDialog").addEventListener("close",()=>{
+  if(photoSessionReopenDetailId){
+    const id=photoSessionReopenDetailId;
+    photoSessionReopenDetailId=null;
+    openClientDetail(id);
+  }
+});
+function authErrorMessage(error, fallback = "No pudimos completar la operación.") {
+  const message = String(error?.message || "").toLowerCase();
+  if(message.includes("invalid login")) return "Correo o contraseña incorrectos.";
+  if(message.includes("token") || message.includes("otp") || message.includes("expired")) return "El código es incorrecto o venció. Solicitá uno nuevo.";
+  if(message.includes("rate") || message.includes("seconds")) return "Esperá un minuto antes de pedir otro código.";
+  if(message.includes("signup") || message.includes("signups") || message.includes("registration")) return "El registro por email está desactivado en Supabase.";
+  if(message.includes("email") && (message.includes("send") || message.includes("smtp") || message.includes("magic link"))) return "Supabase no pudo enviar el email. Revisá la configuración del servicio de correo.";
+  const detail = String(error?.message || "").trim();
+  return detail ? `${fallback} Detalle: ${detail}` : fallback;
+}
+
+function setFormError(id, message = "") {
+  const element = document.getElementById(id);
+  element.textContent = message;
+  element.classList.remove("form-warning");
+  element.classList.toggle("hidden", !message);
+}
+function setFormWarning(id, message = "") {
+  const element = document.getElementById(id);
+  element.textContent = message;
+  element.classList.add("form-warning");
+  element.classList.toggle("hidden", !message);
+}
+
+function setFormSuccess(id, message = "") {
+  const element = document.getElementById(id);
+  element.textContent = message;
+  element.classList.toggle("hidden", !message);
+}
+
+function setAuthMode(mode) {
+  hideBootLoader();
+  const isSpecialMode = mode === "otp" || mode === "reset";
+  document.getElementById("loginForm").classList.toggle("hidden", mode !== "login");
+  document.getElementById("registerForm").classList.toggle("hidden", mode !== "register");
+  document.getElementById("otpForm").classList.toggle("hidden", mode !== "otp");
+  document.getElementById("resetPasswordForm").classList.toggle("hidden", mode !== "reset");
+  document.querySelector(".auth-tabs").classList.toggle("hidden", isSpecialMode);
+  document.querySelectorAll("[data-auth-mode]").forEach(button => button.classList.toggle("active", button.dataset.authMode === mode));
+  const content = {
+    login: ["Ingresar a Janos Control", "Accedé con tu contraseña o recibí un código en tu email."],
+    register: ["Crear una cuenta", "Cada colega tendrá su espacio privado de clientes, tareas y rendiciones."],
+    otp: ["Verificá tu email", "Te enviamos un código de seguridad. Si no lo ves en tu bandeja de entrada, revisá la carpeta de Spam o Correo no deseado."],
+    reset: ["Creá una nueva contraseña", "Elegí una contraseña segura de al menos 8 caracteres."],
+  }[mode];
+  document.getElementById("authTitle").textContent = content[0];
+  document.getElementById("authCopy").textContent = content[1];
+  ["loginError", "signupError", "otpError", "resetError"].forEach(id => setFormError(id));
+  setFormSuccess("loginNotice");
+}
+
+function showOtpForm(request) {
+  pendingOtp = request;
+  document.getElementById("otpEmail").textContent = request.email;
+  document.getElementById("otpForm").reset();
+  setAuthMode("otp");
+  document.querySelector('#otpForm [name="token"]').focus();
+}
+
+async function sendOtp(request, button) {
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = "Enviando…";
+  try {
+    await requestEmailCode(request.email, { createUser: request.createUser, profile: request.profile });
+    showOtpForm(request);
+    return true;
+  } catch(error) {
+    console.error("Error al solicitar código de acceso", error);
+    return error;
+  } finally {
+    button.disabled = false;
+    button.textContent = originalText;
+  }
+}
+
+document.querySelectorAll("[data-auth-mode]").forEach(button => button.addEventListener("click", () => setAuthMode(button.dataset.authMode)));
+
+document.getElementById("loginForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  setFormError("loginError");
+  button.disabled = true;
+  button.textContent = "Ingresando…";
+  try {
+    const session = await signIn(form.elements.email.value.trim(), form.elements.password.value);
+    await startApplication(session);
+  } catch(error) {
+    setFormError("loginError", authErrorMessage(error, "No se pudo iniciar sesión."));
+  } finally {
+    button.disabled = false;
+    button.textContent = "Ingresar";
+  }
+});
+
+document.getElementById("requestLoginCode").addEventListener("click", async event => {
+  const form = document.getElementById("loginForm");
+  const emailInput = form.elements.email;
+  if(!emailInput.value.trim() || !emailInput.checkValidity()) { emailInput.reportValidity(); return; }
+  setFormError("loginError");
+  const result = await sendOtp({ email: emailInput.value.trim().toLowerCase(), createUser: false, profile: {} }, event.currentTarget);
+  if(result instanceof Error) setFormError("loginError", authErrorMessage(result, "No pudimos enviar el código. Revisá el email."));
+});
+
+document.getElementById("forgotPassword").addEventListener("click", async event => {
+  const form = document.getElementById("loginForm");
+  const emailInput = form.elements.email;
+  if(!emailInput.value.trim() || !emailInput.checkValidity()) { emailInput.reportValidity(); return; }
+  const button = event.currentTarget;
+  const originalText = button.textContent;
+  setFormError("loginError");
+  setFormSuccess("loginNotice");
+  button.disabled = true;
+  button.textContent = "Enviando…";
+  try {
+    await requestPasswordReset(emailInput.value.trim().toLowerCase());
+    setFormSuccess("loginNotice", "Te enviamos un enlace para crear una contraseña nueva. Revisá también Spam.");
+  } catch(error) {
+    setFormError("loginError", authErrorMessage(error, "No pudimos enviar el correo de recuperación."));
+  } finally {
+    button.disabled = false;
+    button.textContent = originalText;
+  }
+});
+
+document.getElementById("registerForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const firstName = form.elements.firstName.value.trim();
+  const lastName = form.elements.lastName.value.trim();
+  const whatsapp = form.elements.whatsapp.value.trim();
+  const password = form.elements.password.value;
+  const phoneDigits = whatsapp.replace(/\D/g, "");
+  const signupSalons = [...form.querySelectorAll('[name="signupSalons"]:checked')].map(x => x.value);
+  if(phoneDigits.length < 8 || phoneDigits.length > 15) {
+    setFormError("signupError", "Ingresá un número de WhatsApp válido, con código de área.");
+    form.elements.whatsapp.focus();
+    return;
+  }
+  if(!signupSalons.length) {
+    setFormError("signupSalonError", "Elegí al menos un salón que administrás.");
+    return;
+  }
+  setFormError("signupSalonError");
+  if(password.length < 8) {
+    setFormError("signupError", "La contraseña debe tener al menos 8 caracteres.");
+    form.elements.password.focus();
+    return;
+  }
+  setFormError("signupError");
+  const button = form.querySelector('button[type="submit"]');
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = "Creando cuenta…";
+  try {
+    const email = form.elements.email.value.trim().toLowerCase();
+    await signUp(email, password, {
+      first_name: firstName, last_name: lastName, full_name: `${firstName} ${lastName}`, whatsapp, salons: signupSalons
+    });
+    notifyAdmin(email, `${firstName} ${lastName}`.trim());
+    setFormWarning("signupError", "¡Cuenta creada con éxito! 🎉 Está pendiente de aprobación por el administrador. Podés contactarte por WhatsApp al +54 9 11 2862 5916.");
+    form.reset();
+  } catch(error) {
+    setFormError("signupError", authErrorMessage(error, "No pudimos crear la cuenta."));
+  } finally {
+    button.disabled = false;
+    button.textContent = originalText;
+  }
+});
+
+document.getElementById("otpForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  const token = form.elements.token.value.replace(/\D/g, "");
+  if(token.length < 6 || token.length > 8) { setFormError("otpError", "Ingresá todos los dígitos del código recibido."); return; }
+  button.disabled = true;
+  button.textContent = "Verificando…";
+  setFormError("otpError");
+  try {
+    const session = await verifyEmailCode(pendingOtp.email, token);
+    await startApplication(session);
+  } catch(error) {
+    setFormError("otpError", authErrorMessage(error));
+  } finally {
+    button.disabled = false;
+    button.textContent = "Verificar e ingresar";
+  }
+});
+
+document.getElementById("resendOtp").addEventListener("click", async event => {
+  if(!pendingOtp) return;
+  setFormError("otpError");
+  const result = await sendOtp(pendingOtp, event.currentTarget);
+  if(result instanceof Error) setFormError("otpError", authErrorMessage(result, "No pudimos reenviar el código."));
+  else toast("Código reenviado");
+});
+
+document.getElementById("backFromOtp").addEventListener("click", () => setAuthMode(pendingOtp?.createUser ? "register" : "login"));
+
+document.getElementById("resetPasswordForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const password = form.elements.password.value;
+  const confirmation = form.elements.passwordConfirm.value;
+  const button = form.querySelector('button[type="submit"]');
+  setFormError("resetError");
+  if(password.length < 8) { setFormError("resetError", "La contraseña debe tener al menos 8 caracteres."); return; }
+  if(password !== confirmation) { setFormError("resetError", "Las contraseñas no coinciden."); return; }
+  button.disabled = true;
+  button.textContent = "Guardando…";
+  try {
+    await updatePassword(password);
+    window.history.replaceState({}, document.title, window.location.pathname);
+    const session = await getSession();
+    form.reset();
+    await startApplication(session);
+    toast("Contraseña actualizada");
+  } catch(error) {
+    setFormError("resetError", authErrorMessage(error, "No pudimos actualizar la contraseña."));
+  } finally {
+    button.disabled = false;
+    button.textContent = "Guardar nueva contraseña";
+  }
+});
+
+document.getElementById("signOutBtn").addEventListener("click",async()=>{await runCloudSync();await signOut();currentUser=null;pendingOtp=null;storageKey=STORAGE_KEY;state=initialState();document.getElementById("appShell").classList.add("hidden");document.getElementById("authGate").classList.remove("hidden");document.getElementById("loginForm").reset();document.getElementById("registerForm").reset();document.getElementById("resetPasswordForm").reset();setAuthMode("login");});
+
+async function startApplication(session){
+  currentUser=session?.user||null;
+  if(cloudEnabled&&currentUser){
+    storageKey=storageKeyForUser(currentUser);const pendingLocal=loadState(storageKey);state=pendingLocal;
+    setSyncStatus("Verificando tu acceso…");
+    try{
+      // Estos 3 pedidos a Supabase no dependen uno del otro, asi que se disparan
+      // los 3 juntos en vez de uno atras del otro (antes cada uno esperaba a que
+      // terminara el anterior — esa fila de esperas era la razon principal por
+      // la que la app tardaba varios segundos en abrir).
+      const accessProfilePromise=getAccessProfile();
+      const cloudStatePromise=loadCloudState(BASE_RATES);
+      cloudStatePromise.catch(()=>{}); // evita "unhandled rejection" si se corta antes de usarla (ej. cuenta bloqueada)
+      const latestUpdatePromise=getLatestUpdateAt().catch(snapshotError=>{console.error(snapshotError);return null;});
+      accessProfile=await accessProfilePromise;
+      if(accessProfile.status==="blocked"){await signOut();currentUser=null;document.getElementById("appShell").classList.add("hidden");document.getElementById("authGate").classList.remove("hidden");setAuthMode("login");setFormWarning("loginError","¡Tu cuenta fue creada con éxito! 🎉 Está pendiente de aprobación por el administrador. Podés contactarte por WhatsApp al +54 9 11 2862 5916.");return;}
+      setSyncStatus("Cargando tus clientes, tareas y rendiciones…");
+      if(accessProfile.role==="admin"){setSyncStatus("Cargando usuarios registrados…");adminUsers=await listUserProfiles();setSyncStatus("Cargando tus clientes, tareas y rendiciones…");}
+      const cloudState=await cloudStatePromise;
+      const fullCloudState={...initialState(),...cloudState};const syncedBaseline=loadSyncedSnapshot(storageKey);if(syncedBaseline&&JSON.stringify(pendingLocal)!==JSON.stringify(syncedBaseline)){state=mergeForSync(fullCloudState,pendingLocal,syncedBaseline);localStorage.setItem(storageKey,JSON.stringify(state));setSyncStatus("Terminando de guardar cambios pendientes…");try{await syncCloudState(state,currentUser);}catch(pendingSyncError){console.error(pendingSyncError);}toast("Encontramos un cambio que había quedado sin guardar en este dispositivo y lo combinamos con lo último de la nube.");}else{state=fullCloudState;}localStorage.setItem(storageKey,JSON.stringify(state));lastSyncedState=JSON.parse(JSON.stringify(state));saveSyncedSnapshot(storageKey,state);setSyncStatus("Sincronizado");
+      remoteSnapshotAt=await latestUpdatePromise;
+    }catch(error){console.error(error);setSyncStatus("Modo local · sin conexión");}}
+  else{storageKey=STORAGE_KEY;state=loadState(storageKey);}
+  const metadata = currentUser?.user_metadata || {};
+  setBootStatus("Preparando tu panel…");
+  document.getElementById("signedInUser").textContent=accessProfile.display_name||metadata.full_name||currentUser?.email||"Modo local";
+  document.getElementById("usersNav").classList.toggle("hidden",accessProfile.role!=="admin");
+  document.getElementById("authGate").classList.add("hidden");document.getElementById("appShell").classList.remove("hidden");render();setView(activeView);
+  hideBootLoader();
+}
+async function bootstrap(){
+  setBootStatus("Verificando tu sesión…");
+  if(!cloudEnabled){await startApplication(null);setSyncStatus("Modo local · Supabase sin configurar");return;}
+  try{const recoveryType=new URLSearchParams(window.location.hash.replace(/^#/,"")).get("type");const session=await getSession();if(session&&recoveryType==="recovery"){currentUser=session.user;document.getElementById("appShell").classList.add("hidden");document.getElementById("authGate").classList.remove("hidden");setAuthMode("reset");}else if(session)await startApplication(session);else{document.getElementById("authGate").classList.remove("hidden");setAuthMode("login");}}catch(error){console.error(error);document.getElementById("authGate").classList.remove("hidden");setAuthMode("login");setFormError("loginError","No se pudo conectar con Supabase.");}
+}
+
+window.updateManualRenditionWorks = updateManualRenditionWorks;
+window.updateManualRenditionRate = updateManualRenditionRate;
+window.saveManualRendition = saveManualRendition;
+
+document.getElementById("globalSearch").addEventListener("input", e => runGlobalSearch(e.target.value));
+document.getElementById("globalSearch").addEventListener("keydown", e => { if (e.key === "Escape") closeGlobalSearch(); });
+document.getElementById("globalSearchResults").addEventListener("click", e => {
+  const item = e.target.closest("[data-search-result]");
+  if (!item) return;
+  const idx = Number(item.dataset.searchResult);
+  const result = window._globalSearchResults?.[idx];
+  if (result) result.action();
+  closeGlobalSearch();
+});
+document.addEventListener("click", e => {
+  const wrap = document.querySelector(".global-search-wrap");
+  if (wrap && !wrap.contains(e.target)) closeGlobalSearch();
+});
+
+(function handleGcalRedirect() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("calendar_connected") === "1") {
+    history.replaceState({}, "", "/");
+    setTimeout(() => { setView("calendar"); toast("Google Calendar conectado correctamente"); fetchGcalEvents(calendarMonth); }, 800);
+  }
+  if (params.get("calendar_error")) {
+    history.replaceState({}, "", "/");
+    setTimeout(() => toast("Error al conectar Google Calendar: " + params.get("calendar_error")), 800);
+  }
+})();
+bootstrap();

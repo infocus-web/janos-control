@@ -38,3 +38,5 @@ outputs/
 supabase/.temp/
 Halo-Fine-Art-Fotolibros/
 janos-control/
+.vercel
+.env*

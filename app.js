@@ -701,7 +701,7 @@ function whatsappTemplateForType(type){
 }
 // Valores de variables compartidos por todos los mensajes (presentación
 // privada y speeches de grupo), para no duplicar esta lista en cada uno.
-function messagePlaceholderValues(client){const metadata=currentUser?.user_metadata||{};const sender=activeWhatsappSender();const session=client.photoSession;return {nombre:client.clientName||client.honoree,homenajeado:client.honoree,fecha:dateText(client.eventDate),salon:client.salon,tipo:client.type,codigo:client.code,remitente:sender?.name||metadata.first_name||metadata.full_name||"el equipo",salonesSesion:joinSpanishList(SESSION_SALONS),diaFechaSesion:sessionSpeechDateText(session),horaSesion:sessionSpeechTimeText(session?.time),salonSesion:session?.location||"",mapaSesion:sessionMapsUrl(session)};}
+function messagePlaceholderValues(client){const metadata=currentUser?.user_metadata||{};const sender=activeWhatsappSender();const session=client.photoSession;return {nombre:client.clientName||client.honoree,homenajeado:client.honoree,fecha:dateText(client.eventDate),salon:client.salon,tipo:client.type,codigo:client.code,remitente:sender?.name||metadata.first_name||metadata.full_name||"el equipo",salonesSesion:joinSpanishList(SESSION_SALONS.filter(name=>name!=="Sans Souci")),diaFechaSesion:sessionSpeechDateText(session),horaSesion:sessionSpeechTimeText(session?.time),salonSesion:session?.location||"",mapaSesion:sessionMapsUrl(session)};}
 function fillTemplate(template,values){return Object.entries(values).reduce((message,[key,value])=>message.split(`{${key}}`).join(String(value||"")),template);}
 function whatsappMessage(client){const template=whatsappTemplateForType(client.type);return fillTemplate(template,messagePlaceholderValues(client));}
 // Mensajes de grupo (speeches): plantillas fijas, no por tipo de evento,
@@ -718,11 +718,12 @@ function saveSpeechTemplates(){const updated={};SPEECH_TYPES.forEach(s=>{const v
 // con el texto cargado) — por eso acá se copia y el único paso manual es
 // Ctrl+V y Enter, en el grupo correcto de una.
 //
-// Importante sobre el orden: window.open() tiene que llamarse de forma
-// síncrona, en la misma tanda de eventos que el click, o el navegador lo
-// bloquea como si fuera un popup no solicitado. Por eso NO se usa "await"
-// antes de abrir la pestaña: primero se abre el grupo, y la copia al
-// portapapeles corre en paralelo. Si el portapapeles falla igual (permisos,
+// Importante sobre el orden: el grupo se abre en WhatsApp de escritorio
+// (ver openWhatsappGroupLink), y esa app se lleva el foco. La copia al
+// portapapeles se arranca ANTES de abrir la app, mientras Janos Control
+// todavía tiene el foco (si no, Chrome la rechaza), y sin "await" para que
+// la apertura siga en la misma tanda de eventos que el click (si no, Chrome
+// bloquea abrir la app). Si el portapapeles falla igual (permisos,
 // navegador viejo, etc.), se muestra el texto en un cuadro para copiarlo a
 // mano en vez de fallar en silencio.
 function sendSpeech(clientId,key){
@@ -731,12 +732,13 @@ function sendSpeech(clientId,key){
   const groupUrl=(client.whatsappGroupUrl||"").trim();
   if(!groupUrl){ openClientForm(client); toast("Pegá primero el link del grupo de WhatsApp en la ficha para poder enviar speeches."); return; }
   const message=speechMessage(client,key);
-  window.open(groupUrl,"janosExternal","noopener,noreferrer");
   if(navigator.clipboard?.writeText){
     navigator.clipboard.writeText(message)
       .then(()=>toast("Mensaje copiado · pegalo (Ctrl+V) en el grupo que se abrió"))
       .catch(()=>{ console.error("No se pudo copiar al portapapeles"); prompt("No se pudo copiar automático. Copiá este texto (Ctrl+C) y pegalo en el grupo:", message); });
+    openWhatsappGroupLink(groupUrl);
   } else {
+    openWhatsappGroupLink(groupUrl);
     prompt("Tu navegador no permite copiar automático. Copiá este texto (Ctrl+C) y pegalo en el grupo:", message);
   }
   client.history=client.history||[];
@@ -775,10 +777,25 @@ function saveWhatsappSenders(){
   renderSettings();
   toast("Mensajes de WhatsApp guardados");
 }
-function whatsappUrl(client){const phone=whatsappNumber(client.clientPhone);return phone?`https://wa.me/${phone}?text=${encodeURIComponent(whatsappMessage(client))}`:"";}
-function contactClient(id){const client=state.clients.find(item=>item.id===id);if(!client)return;const url=whatsappUrl(client);if(!url){openClientForm(client);toast("Agregá el WhatsApp del cliente para contactarlo");return;}window.open(url,"janosExternal","noopener,noreferrer");client.contactedAt=new Date().toISOString();client.history=client.history||[];client.history.push({date:client.contactedAt,text:"Contacto inicial por WhatsApp registrado",type:"whatsapp_contact"});saveState();refreshTaskViews(id);toast("Contacto registrado");}
+// WhatsApp de escritorio: en vez de abrir wa.me / chat.whatsapp.com en una
+// pestaña de Chrome (que muestra la página intermedia "Abrir aplicación /
+// Continuar en WhatsApp Web"), se abre directo la app de WhatsApp instalada
+// en la PC con su protocolo whatsapp://, en el mismo formato que usa la
+// propia página de WhatsApp: whatsapp://send/?phone=&text= para el chat 1 a 1
+// y whatsapp://chat/?code= para un grupo. La primera vez Chrome pregunta
+// "¿Abrir WhatsApp?": tildando "Permitir siempre" no vuelve a preguntar.
+function whatsappUrl(client){const phone=whatsappNumber(client.clientPhone);return phone?`whatsapp://send/?phone=${phone}&text=${encodeURIComponent(whatsappMessage(client))}`:"";}
+function whatsappGroupAppUrl(url){const m=String(url||"").match(/chat\.whatsapp\.com\/(?:invite\/)?([A-Za-z0-9_-]+)/i);return m?`whatsapp://chat/?code=${m[1]}`:"";}
+// Abre un link whatsapp:// sin dejar una pestaña en blanco: el navegador se
+// lo pasa a la app de escritorio y Janos Control queda como estaba.
+function openWhatsappApp(url){const a=document.createElement("a");a.href=url;a.style.display="none";document.body.appendChild(a);a.click();a.remove();}
+// Link de grupo guardado en la ficha: si es un link de invitación
+// (chat.whatsapp.com/...) se abre en la app; cualquier otro link se abre
+// en una pestaña como antes.
+function openWhatsappGroupLink(url){const appUrl=whatsappGroupAppUrl(url);if(appUrl)openWhatsappApp(appUrl);else window.open(url,"janosExternal","noopener,noreferrer");}
+function contactClient(id){const client=state.clients.find(item=>item.id===id);if(!client)return;const url=whatsappUrl(client);if(!url){openClientForm(client);toast("Agregá el WhatsApp del cliente para contactarlo");return;}openWhatsappApp(url);client.contactedAt=new Date().toISOString();client.history=client.history||[];client.history.push({date:client.contactedAt,text:"Contacto inicial por WhatsApp registrado",type:"whatsapp_contact"});saveState();refreshTaskViews(id);toast("Contacto registrado");}
 function resetClientContact(id){const client=state.clients.find(item=>item.id===id);if(!client)return;client.contactedAt="";client.history=client.history||[];client.history.push({date:new Date().toISOString(),text:"Se deshizo la marca de contacto inicial",type:"whatsapp_contact_reset"});saveState();refreshTaskViews(id);document.getElementById("resetContactBtn").classList.add("hidden");toast("Contacto deshecho");}
-function openWhatsappGroup(id){const client=state.clients.find(item=>item.id===id);if(!client)return;const url=(client.whatsappGroupUrl||"").trim();if(!url){openClientForm(client);toast("Pegá el link del grupo de WhatsApp para poder abrirlo");return;}window.open(url,"janosExternal","noopener,noreferrer");}
+function openWhatsappGroup(id){const client=state.clients.find(item=>item.id===id);if(!client)return;const url=(client.whatsappGroupUrl||"").trim();if(!url){openClientForm(client);toast("Pegá el link del grupo de WhatsApp para poder abrirlo");return;}openWhatsappGroupLink(url);}
 async function openDriveFolder(id){
   const client=state.clients.find(item=>item.id===id);if(!client)return;
   const url=(client.driveUrl||"").trim();
@@ -1059,18 +1076,43 @@ function renderTasks() {
 let renditionCategoryFilter = "";
 let renditionStatusFilter = "";
 let renditionSalonFilter = "";
+let renditionRoleFilter = localStorage.getItem("janosRenditionRole") || "todos";
 let selectedRenditionIds = new Set();
 let highlightedRenditionId = null; // fila resaltada al hacer clic, para guiar la vista al comparar con el sitio externo
 // Rendiciones ligadas a tarea toman el salón del cliente; las manuales tienen su propio campo "salon".
 function renditionSalon(r) { if (r.isManual) return r.salon || ""; const c = state.clients.find(x => x.id === r.clientId); return c?.salon || ""; }
 function renditionEventDate(r) { if (r.isManual) return r.eventDate || r.workDate; const c = state.clients.find(x => x.id === r.clientId); return c?.eventDate || r.workDate; }
+// Rol (foto/video/ambos) de una rendición, para poder separar el trabajo del fotógrafo del trabajo del
+// videógrafo en la pantalla de Rendiciones (antes solo existía este filtro en la pantalla de Tareas).
+// PERSONAL/GUARDIA FOTOGRAFIA|VIDEO ya son inequívocas por categoría. COMPLEMENTOS es la categoría mezclada:
+// para una rendición ligada a una tarea se prioriza TASK_ROLES (más específico, cubre casos donde el texto
+// del trabajo no coincide exactamente con el catálogo); si no hay tarea o no está en TASK_ROLES, se usa el
+// rol cargado en MANUAL_WORKS para ese trabajo puntual (así también cubre las rendiciones manuales).
+function workRole(category, work) {
+  if (category === "PERSONAL FOTOGRAFIA" || category === "GUARDIA FOTO" || category === "GUARDIA FOTOGRAFIA") return "foto";
+  if (category === "PERSONAL VIDEO" || category === "GUARDIA VIDEO") return "video";
+  const entry = (MANUAL_WORKS[category] || []).find(w => w.label === work);
+  return entry?.role || "ambos";
+}
+function renditionRole(r) {
+  if (r.taskId) {
+    const c = state.clients.find(x => x.id === r.clientId);
+    const t = c?.tasks.find(x => x.id === r.taskId);
+    if (t?.key && TASK_ROLES[t.key]) return TASK_ROLES[t.key];
+  }
+  return workRole(r.category, r.work);
+}
+function matchesRoleFilter(r, role) { return role === "todos" || renditionRole(r) === "ambos" || renditionRole(r) === role; }
+const ROLE_BADGE = { foto: " 📷", video: " 🎥" };
 function renderRenditions() {
   const activeCount=state.renditions.filter(r=>!r.archivedAt).length,archivedCount=state.renditions.length-activeCount;
-  const rows=state.renditions.filter(r=>renditionViewMode==="archived"?Boolean(r.archivedAt):!r.archivedAt).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+  const roleBase=state.renditions.filter(r=>renditionViewMode==="archived"?Boolean(r.archivedAt):!r.archivedAt);
+  const roleTodosCount=roleBase.length,roleFotoCount=roleBase.filter(r=>matchesRoleFilter(r,"foto")).length,roleVideoCount=roleBase.filter(r=>matchesRoleFilter(r,"video")).length;
+  const rows=roleBase.filter(r=>matchesRoleFilter(r,renditionRoleFilter)).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
   const categories=["PERSONAL FOTOGRAFIA","PERSONAL VIDEO","COMPLEMENTOS","GUARDIA FOTO","GUARDIA VIDEO"];
   const categorySummary=categories.map(cat=>{const total=rows.filter(r=>r.category===cat).reduce((s,r)=>s+Number(r.amount||0),0);return total>0?`<div class="category-kpi"><span>${cat}</span><strong>${money(total)}</strong></div>`:""}).join("");
   const salons=salonsInUse();
-  document.getElementById("renditionsView").innerHTML = `<div class="rendition-controls"><div class="view-switch" aria-label="Archivo de rendiciones"><button class="${renditionViewMode==="active"?"active":""}" data-rendition-view="active">Activas <b>${activeCount}</b></button><button class="${renditionViewMode==="archived"?"active":""}" data-rendition-view="archived">Archivadas <b>${archivedCount}</b></button></div><select id="renditionCategoryFilter"><option value="">Todas las categorías</option>${categories.map(c=>`<option value="${c}">${c}</option>`).join("")}</select><select id="renditionSalonFilter" aria-label="Filtrar por salón"><option value="">Todos los salones</option>${salons.map(s=>`<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("")}</select><select id="renditionFilter"><option value="">Todos los estados</option>${Object.entries(RENDITION_STATUS).map(([k,v])=>`<option value="${k}">${v}</option>`).join("")}</select><button class="secondary-btn" id="exportRenditionsCsv" title="Exporta las rendiciones pendientes en el formato que usa el script de carga automática">Exportar CSV</button><button class="secondary-btn" id="exportRenditionsXlsx" title="Exporta a Excel las rendiciones visibles con la vista y filtros actuales">Exportar Excel</button></div>${categorySummary?`<div class="category-summary">${categorySummary}</div>`:""}<div id="renditionBulkBar" class="rendition-bulk-bar"></div><div class="rendition-total" aria-live="polite"><div><span>Total a cobrar</span><small id="renditionTotalCount">${renditionCountLabel(rows.length)}</small></div><strong id="renditionTotalAmount">${money(renditionTotal(rows))}</strong></div><div class="panel"><div class="rendition-row header"><span class="rendition-select-cell"><input type="checkbox" id="renditionSelectAll" aria-label="Seleccionar todas"> Trabajo</span><span>Evento</span><span>Categoría</span><span>Importe</span><span>Estado</span><span>Acciones</span></div><div id="renditionRows">${renditionRows(rows)}</div></div>`;
+  document.getElementById("renditionsView").innerHTML = `<div class="rendition-controls"><div class="view-switch" aria-label="Archivo de rendiciones"><button class="${renditionViewMode==="active"?"active":""}" data-rendition-view="active">Activas <b>${activeCount}</b></button><button class="${renditionViewMode==="archived"?"active":""}" data-rendition-view="archived">Archivadas <b>${archivedCount}</b></button></div><div class="view-switch" aria-label="Separar por rol"><button class="${renditionRoleFilter==="todos"?"active":""}" data-rendition-role="todos">Todos <b>${roleTodosCount}</b></button><button class="${renditionRoleFilter==="foto"?"active":""}" data-rendition-role="foto">📷 Fotógrafo <b>${roleFotoCount}</b></button><button class="${renditionRoleFilter==="video"?"active":""}" data-rendition-role="video">🎥 Videógrafo <b>${roleVideoCount}</b></button></div><select id="renditionCategoryFilter"><option value="">Todas las categorías</option>${categories.map(c=>`<option value="${c}">${c}</option>`).join("")}</select><select id="renditionSalonFilter" aria-label="Filtrar por salón"><option value="">Todos los salones</option>${salons.map(s=>`<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("")}</select><select id="renditionFilter"><option value="">Todos los estados</option>${Object.entries(RENDITION_STATUS).map(([k,v])=>`<option value="${k}">${v}</option>`).join("")}</select><button class="secondary-btn" id="exportRenditionsCsv" title="Exporta las rendiciones pendientes en el formato que usa el script de carga automática">Exportar CSV</button><button class="secondary-btn" id="exportRenditionsXlsx" title="Exporta a Excel las rendiciones visibles con la vista y filtros actuales">Exportar Excel</button></div>${categorySummary?`<div class="category-summary">${categorySummary}</div>`:""}<div id="renditionBulkBar" class="rendition-bulk-bar"></div><div class="rendition-total" aria-live="polite"><div><span>Total a cobrar</span><small id="renditionTotalCount">${renditionCountLabel(rows.length)}</small></div><strong id="renditionTotalAmount">${money(renditionTotal(rows))}</strong></div><div class="panel"><div class="rendition-row header"><span class="rendition-select-cell"><input type="checkbox" id="renditionSelectAll" aria-label="Seleccionar todas"> Trabajo</span><span>Evento</span><span>Categoría</span><span>Importe</span><span>Estado</span><span>Acciones</span></div><div id="renditionRows">${renditionRows(rows)}</div></div>`;
   const cf=document.getElementById("renditionCategoryFilter");if(cf)cf.value=renditionCategoryFilter;
   const sf=document.getElementById("renditionSalonFilter");if(sf)sf.value=renditionSalonFilter;
   const rf=document.getElementById("renditionFilter");if(rf)rf.value=renditionStatusFilter;
@@ -1094,7 +1136,7 @@ function updateRenditionBulkBar(rows){
     selectAll.indeterminate=!allSelected&&visibleIds.some(id=>selectedRenditionIds.has(id));
   }
 }
-function currentRenditionRows(){return state.renditions.filter(r=>(renditionViewMode==="archived"?Boolean(r.archivedAt):!r.archivedAt)&&(!renditionStatusFilter||r.status===renditionStatusFilter)&&(!renditionCategoryFilter||r.category===renditionCategoryFilter)&&(!renditionSalonFilter||renditionSalon(r)===renditionSalonFilter)).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));}
+function currentRenditionRows(){return state.renditions.filter(r=>(renditionViewMode==="archived"?Boolean(r.archivedAt):!r.archivedAt)&&matchesRoleFilter(r,renditionRoleFilter)&&(!renditionStatusFilter||r.status===renditionStatusFilter)&&(!renditionCategoryFilter||r.category===renditionCategoryFilter)&&(!renditionSalonFilter||renditionSalon(r)===renditionSalonFilter)).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));}
 function toggleRenditionSelect(id,checked){if(checked)selectedRenditionIds.add(id);else selectedRenditionIds.delete(id);const rows=currentRenditionRows();updateRenditionTotal(rows);updateRenditionBulkBar(rows);}
 function toggleRenditionSelectAll(checked){const rows=currentRenditionRows();rows.forEach(r=>checked?selectedRenditionIds.add(r.id):selectedRenditionIds.delete(r.id));document.getElementById("renditionRows").innerHTML=renditionRows(rows);updateRenditionBulkBar(rows);}
 function bulkArchiveRenditions(){
@@ -1128,7 +1170,7 @@ function bulkDeleteRenditions(){
   saveState();
   toast(`${ids.length} rendición${ids.length===1?"":"es"} eliminada${ids.length===1?"":"s"}`);
 }
-function renditionRows(rows) { return rows.length ? rows.map(r=>{const c=state.clients.find(x=>x.id===r.clientId),processed=r.status!=="pending";const actions=r.archivedAt?`<button class="small-btn" data-restore-rendition="${r.id}">Restaurar</button><button class="small-btn danger" data-delete-rendition="${r.id}">Eliminar</button>`:processed?`<button class="small-btn" data-archive-rendition="${r.id}">Archivar</button><button class="small-btn danger" data-delete-rendition="${r.id}">Eliminar</button>`:`<span class="muted">Rendila para archivar</span>`; return `<div class="rendition-row ${selectedRenditionIds.has(r.id)?"selected":""}${highlightedRenditionId===r.id?" row-highlight":""}" data-rendition-row="${r.id}"><div class="rendition-work-cell"><input type="checkbox" class="rendition-check" data-rendition-select="${r.id}" ${selectedRenditionIds.has(r.id)?"checked":""} aria-label="Seleccionar"><div><strong>${escapeHtml(r.work)}</strong><small>${escapeHtml(r.isManual?(r.salon||"Sin salón"):(c?`#${c.code} · ${c.honoree} · ${c.salon||"Sin salón"}`:"Cliente eliminado"))} · realizado ${r.workDate?dateText(r.workDate):"sin fecha"}</small></div></div><span>${r.isManual?dateText(r.eventDate):(c?dateText(c.eventDate):"-")}</span><span class="muted">${escapeHtml(r.category)}<br><small>Cierre ${r.periodEnd?dateText(r.periodEnd):"-"}</small></span><span class="money">${money(r.amount)}</span><select data-rendition-status="${r.id}" ${r.archivedAt?"disabled title=\"Restaurá la rendición para cambiar su estado\"":""}>${Object.entries(RENDITION_STATUS).map(([k,v])=>`<option value="${k}" ${r.status===k?"selected":""}>${v}</option>`).join("")}</select><div class="rendition-actions">${actions}</div></div>`;}).join("") : empty(renditionViewMode==="archived"?"No hay rendiciones archivadas":"Sin rendiciones activas", renditionViewMode==="archived"?"Las rendiciones que archives aparecerán aquí.":"Al completar un trabajo remunerado aparecerá aquí."); }
+function renditionRows(rows) { return rows.length ? rows.map(r=>{const c=state.clients.find(x=>x.id===r.clientId),processed=r.status!=="pending",roleBadge=ROLE_BADGE[renditionRole(r)]||"";const actions=r.archivedAt?`<button class="small-btn" data-restore-rendition="${r.id}">Restaurar</button><button class="small-btn danger" data-delete-rendition="${r.id}">Eliminar</button>`:processed?`<button class="small-btn" data-archive-rendition="${r.id}">Archivar</button><button class="small-btn danger" data-delete-rendition="${r.id}">Eliminar</button>`:`<span class="muted">Rendila para archivar</span>`; return `<div class="rendition-row ${selectedRenditionIds.has(r.id)?"selected":""}${highlightedRenditionId===r.id?" row-highlight":""}" data-rendition-row="${r.id}"><div class="rendition-work-cell"><input type="checkbox" class="rendition-check" data-rendition-select="${r.id}" ${selectedRenditionIds.has(r.id)?"checked":""} aria-label="Seleccionar"><div><strong>${escapeHtml(r.work)}</strong><small>${escapeHtml(r.isManual?(r.salon||"Sin salón"):(c?`#${c.code} · ${c.honoree} · ${c.salon||"Sin salón"}`:"Cliente eliminado"))} · realizado ${r.workDate?dateText(r.workDate):"sin fecha"}</small></div></div><span>${r.isManual?dateText(r.eventDate):(c?dateText(c.eventDate):"-")}</span><span class="muted">${escapeHtml(r.category)}${roleBadge}<br><small>Cierre ${r.periodEnd?dateText(r.periodEnd):"-"}</small></span><span class="money">${money(r.amount)}</span><select data-rendition-status="${r.id}" ${r.archivedAt?"disabled title=\"Restaurá la rendición para cambiar su estado\"":""}>${Object.entries(RENDITION_STATUS).map(([k,v])=>`<option value="${k}" ${r.status===k?"selected":""}>${v}</option>`).join("")}</select><div class="rendition-actions">${actions}</div></div>`;}).join("") : empty(renditionViewMode==="archived"?"No hay rendiciones archivadas":"Sin rendiciones activas", renditionViewMode==="archived"?"Las rendiciones que archives aparecerán aquí.":"Al completar un trabajo remunerado aparecerá aquí."); }
 
 function logRenditionArchive(item, archived){const client=state.clients.find(c=>c.id===item.clientId);if(!client)return;client.history=client.history||[];client.history.push({date:new Date().toISOString(),text:`Rendición ${archived?"archivada":"restaurada"}: ${item.work}`,type:"rendition_archive",renditionId:item.id,archived});}
 function archiveRendition(id){const item=state.renditions.find(r=>r.id===id);if(!item)return;if(item.status==="pending"){toast("Primero marcá la rendición como rendida.");return;}item.archivedAt=new Date().toISOString();logRenditionArchive(item,true);saveState();toast("Rendición archivada");}
@@ -1257,43 +1299,44 @@ const MANUAL_WORKS = {
     { label: "Edicion de video Drone FPV", rate: "droneEdit" },
   ],
   "COMPLEMENTOS": [
-    { label: "Drone en evento", rate: "drone" },
-    { label: "Drone en sesión de fotos", rate: "drone" },
-    { label: "DRONE FPV", rate: "drone" },
-    { label: "DRONE FPV (SOLO EDICION)", rate: "droneEdit" },
-    { label: "Edicion en vivo de fotos", rate: "liveEditor" },
-    { label: "Edicion en vivo video", rate: "liveEditor" },
-    { label: "Libro firmas (Fotografia Digital)", rate: "signatureDesign" },
-    { label: "Libro Fiesta (Fotografia Digital)", rate: "partyBookDesign" },
-    { label: "Diseño de pliegos extra en libro (aclarar cantidad en Observaciones)", rate: "extraSheet" },
-    { label: "Video cronologico", rate: "videoExtraClip" },
-    { label: "Video de entrada para pantalla", rate: "videoExtraClip" },
-    { label: "Video con amigos", rate: "book" },
-    { label: "Album de fotos interactivo (fotografía)", rate: "albumInteractive" },
-    { label: "Album de fotos interactivo (videos)", rate: "albumInteractive" },
-    { label: "Fiesta (segundo fotografo)", rate: "photoExtra" },
-    { label: "Fiesta (segundo videografo)", rate: "videoExtra" },
-    { label: "Televisor Fotografia Digital", rate: "totemDigital" },
-    { label: "Asistente en sesion de fotos", rate: "assistant" },
-    { label: "Adicional edicion por camara extra", rate: "extraCameraEdit" },
-    { label: "Glam Cam 360°", rate: null },
-    { label: "Party Cam 360", rate: null },
-    { label: "Music Video", rate: null },
-    { label: "INFINITY BOX", rate: null },
-    { label: "Holograma recepcion", rate: null },
-    { label: "Centro de mesa interactivo x1", rate: null },
-    { label: "Mapping Globo", rate: null },
-    { label: "Maquillaje", rate: null },
-    { label: "Maquillaje plus", rate: null },
-    { label: "Maquillaje x2 plus", rate: null },
-    { label: "ADICIONAL MAQUILLAJE EVENTO", rate: null },
-    { label: "ADICIONAL MAQUILLAJE RECEPCION", rate: null },
-    { label: "MAQUILLAJE BOOK", rate: null },
-    { label: "Vestuario, maquillaje y peinado book moda", rate: "bookModa" },
-    { label: "Fashion look", rate: null },
-    { label: "Invitacion interactiva", rate: null },
-    { label: "Pulseras LED", rate: null },
-    { label: "Recepcion Clientes Palacio SS", rate: null },
+    { label: "Drone en evento", rate: "drone", role: "video" },
+    { label: "Drone en sesión de fotos", rate: "drone", role: "video" },
+    { label: "DRONE FPV", rate: "drone", role: "video" },
+    { label: "DRONE FPV (SOLO EDICION)", rate: "droneEdit", role: "video" },
+    { label: "Edicion en vivo de fotos", rate: "liveEditor", role: "foto" },
+    { label: "Edicion en vivo video", rate: "liveEditor", role: "video" },
+    { label: "Libro firmas (Fotografia Digital)", rate: "signatureDesign", role: "foto" },
+    { label: "Libro Fiesta (Fotografia Digital)", rate: "partyBookDesign", role: "foto" },
+    { label: "Diseño de pliegos extra en libro (aclarar cantidad en Observaciones)", rate: "extraSheet", role: "foto" },
+    { label: "Video cronologico", rate: "videoExtraClip", role: "video" },
+    { label: "Video de entrada para pantalla", rate: "videoExtraClip", role: "video" },
+    { label: "Video con amigos", rate: "book", role: "video" },
+    { label: "Album de fotos interactivo (fotografía)", rate: "albumInteractive", role: "foto" },
+    { label: "Album de fotos interactivo (videos)", rate: "albumInteractive", role: "video" },
+    { label: "Fiesta (segundo fotografo)", rate: "photoExtra", role: "foto" },
+    { label: "Fiesta (segundo videografo)", rate: "videoExtra", role: "video" },
+    { label: "Televisor Fotografia Digital", rate: "totemDigital", role: "foto" },
+    { label: "Asistente en sesion de fotos", rate: "assistant", role: "foto" },
+    // Los siguientes quedan "ambos" (sin filtrar) porque no está claro a qué rol pertenecen — confirmar con Pablo y ajustar.
+    { label: "Adicional edicion por camara extra", rate: "extraCameraEdit", role: "ambos" },
+    { label: "Glam Cam 360°", rate: null, role: "ambos" },
+    { label: "Party Cam 360", rate: null, role: "ambos" },
+    { label: "Music Video", rate: null, role: "video" },
+    { label: "INFINITY BOX", rate: null, role: "ambos" },
+    { label: "Holograma recepcion", rate: null, role: "ambos" },
+    { label: "Centro de mesa interactivo x1", rate: null, role: "ambos" },
+    { label: "Mapping Globo", rate: null, role: "ambos" },
+    { label: "Maquillaje", rate: null, role: "ambos" },
+    { label: "Maquillaje plus", rate: null, role: "ambos" },
+    { label: "Maquillaje x2 plus", rate: null, role: "ambos" },
+    { label: "ADICIONAL MAQUILLAJE EVENTO", rate: null, role: "ambos" },
+    { label: "ADICIONAL MAQUILLAJE RECEPCION", rate: null, role: "ambos" },
+    { label: "MAQUILLAJE BOOK", rate: null, role: "ambos" },
+    { label: "Vestuario, maquillaje y peinado book moda", rate: "bookModa", role: "foto" },
+    { label: "Fashion look", rate: null, role: "foto" },
+    { label: "Invitacion interactiva", rate: null, role: "ambos" },
+    { label: "Pulseras LED", rate: null, role: "ambos" },
+    { label: "Recepcion Clientes Palacio SS", rate: null, role: "ambos" },
   ]
 };
 
@@ -1614,7 +1657,7 @@ async function importClientCsv(file){
 function downloadClientTemplate(){const content="codigo;fecha_evento;salon;tipo;homenajeado;cliente;email;whatsapp;invitados;pack_upgrades;adicionales;servicios_flex;observaciones\n43828;04/07/2026;Pilar Hotel;15;Cliente de ejemplo;Contacto;contacto@ejemplo.com;+54 9 11 1234 5678;120;(SILVER)(GOLD)(PANT);;;\n";const blob=new Blob(["\uFEFF"+content],{type:"text/csv;charset=utf-8"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="plantilla_clientes_janos.csv";a.click();URL.revokeObjectURL(a.href);}
 function escapeCsvCell(value){const text=String(value??"");return /[",\n\r]/.test(text)?`"${text.replace(/"/g,'""')}"`:text;}
 function exportRenditionsXlsx(){const rows=currentRenditionRows();if(!rows.length){toast("No hay rendiciones para exportar con estos filtros.");return;}const data=rows.map(r=>{const c=state.clients.find(x=>x.id===r.clientId);return{"Cliente":r.isManual?"Manual":(c?`#${c.code} · ${c.honoree}`:"Cliente eliminado"),"Fecha evento":dateText(renditionEventDate(r)),"Fecha trabajo":r.workDate?dateText(r.workDate):"","Salón":renditionSalon(r),"Categoría":r.category,"Trabajo":r.work,"Importe":Number(r.amount||0),"Estado":RENDITION_STATUS[r.status]||r.status,"Observaciones":r.observations||"","Cierre de período":r.periodEnd?dateText(r.periodEnd):""};});const ws=XLSX.utils.json_to_sheet(data);ws["!cols"]=[{wch:26},{wch:13},{wch:13},{wch:20},{wch:18},{wch:42},{wch:12},{wch:11},{wch:32},{wch:14}];const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,renditionViewMode==="archived"?"Archivadas":"Rendiciones");const suffix=renditionSalonFilter?renditionSalonFilter.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-z0-9]+/g,"_").replace(/^_|_$/g,"")+"_":"";XLSX.writeFile(wb,`rendiciones_${suffix}${todayIso()}.xlsx`);toast(`${rows.length} rendici\u00F3n${rows.length===1?"":"es"} exportada${rows.length===1?"":"s"} a Excel`);}
-function exportRenditionsCsv(){const rows=state.renditions.filter(r=>r.status==="pending"&&!r.archivedAt&&(!renditionCategoryFilter||r.category===renditionCategoryFilter)&&(!renditionSalonFilter||renditionSalon(r)===renditionSalonFilter));if(!rows.length){toast("No hay rendiciones pendientes para exportar.");return;}const header=["categoria","fecha","salon","trabajo","observaciones"];const lines=rows.map(r=>[r.category,dateText(renditionEventDate(r)),renditionSalon(r),r.work,r.observations||""].map(escapeCsvCell).join(","));const content=[header.join(","),...lines].join("\r\n")+"\r\n";const blob=new Blob(["\uFEFF"+content],{type:"text/csv;charset=utf-8"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`rendiciones_pendientes_${renditionSalonFilter?renditionSalonFilter.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-z0-9]+/g,"_").replace(/^_|_$/g,"")+"_":""}${todayIso()}.csv`;a.click();URL.revokeObjectURL(a.href);toast(`${rows.length} rendici\u00F3n${rows.length===1?"":"es"} exportada${rows.length===1?"":"s"}`);}
+function exportRenditionsCsv(){const rows=state.renditions.filter(r=>r.status==="pending"&&!r.archivedAt&&matchesRoleFilter(r,renditionRoleFilter)&&(!renditionCategoryFilter||r.category===renditionCategoryFilter)&&(!renditionSalonFilter||renditionSalon(r)===renditionSalonFilter));if(!rows.length){toast("No hay rendiciones pendientes para exportar.");return;}const header=["categoria","fecha","salon","trabajo","observaciones"];const lines=rows.map(r=>[r.category,dateText(renditionEventDate(r)),renditionSalon(r),r.work,r.observations||""].map(escapeCsvCell).join(","));const content=[header.join(","),...lines].join("\r\n")+"\r\n";const blob=new Blob(["\uFEFF"+content],{type:"text/csv;charset=utf-8"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`rendiciones_pendientes_${renditionSalonFilter?renditionSalonFilter.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-z0-9]+/g,"_").replace(/^_|_$/g,"")+"_":""}${todayIso()}.csv`;a.click();URL.revokeObjectURL(a.href);toast(`${rows.length} rendici\u00F3n${rows.length===1?"":"es"} exportada${rows.length===1?"":"s"}`);}
 
 function generateSelectionBat(clientId) {
   const numerosRaw = document.getElementById(`seleccion-numeros-${clientId}`)?.value.trim();
@@ -1631,6 +1674,8 @@ function generateSelectionBat(clientId) {
   if (!tokens.length) { toast("No se encontraron números válidos."); return; }
   const bat = `@echo off
 setlocal enabledelayedexpansion
+set "LP=("
+set "RP=)"
 echo ================================================
 echo     COPIADOR DE SELECCION - ${prefijo}
 echo ================================================
@@ -1683,14 +1728,16 @@ for /f "usebackq tokens=* delims=" %%N in ("!TMPFILE!") do (
       set "FOUND=1"
     )
 
-    rem Algunas carpetas nombran las fotos como "PREFIJO (numero).jpg" en vez
-    rem de "PREFIJO-numero.jpg" (es el formato que usa, por ejemplo, el
-    rem renombrado automatico de Windows/otros programas). Se prueban ambos
-    rem formatos, con y sin ceros a la izquierda, antes de darla por perdida.
+    rem Algunas carpetas nombran las fotos con el numero entre parentesis
+    rem en vez de con guion adelante. Se prueban ambos formatos, con y sin
+    rem ceros a la izquierda, antes de darla por no encontrada. Los
+    rem parentesis se arman con variables (LP y RP) en vez de escribirlos
+    rem literal aca adentro, porque un parentesis suelto dentro de un
+    rem bloque if rompe la sintaxis del .bat en Windows.
     if "!FOUND!"=="0" (
-      if exist "%ORIGEN%\\%PREFIJO% (!RAW!).jpg" (
-        copy "%ORIGEN%\\%PREFIJO% (!RAW!).jpg" "%DESTINO%\\%PREFIJO% (!RAW!).jpg" >nul
-        echo   [OK] %PREFIJO% (!RAW!).jpg
+      if exist "%ORIGEN%\\%PREFIJO% !LP!!RAW!!RP!.jpg" (
+        copy "%ORIGEN%\\%PREFIJO% !LP!!RAW!!RP!.jpg" "%DESTINO%\\%PREFIJO% !LP!!RAW!!RP!.jpg" >nul
+        echo   [OK] %PREFIJO% !LP!!RAW!!RP!.jpg
         set /a COUNT+=1
         set "FOUND=1"
       )
@@ -1706,16 +1753,38 @@ for /f "usebackq tokens=* delims=" %%N in ("!TMPFILE!") do (
     )
 
     if "!FOUND!"=="0" (
-      if exist "%ORIGEN%\\%PREFIJO% (!INTNUM!).jpg" (
-        copy "%ORIGEN%\\%PREFIJO% (!INTNUM!).jpg" "%DESTINO%\\%PREFIJO% (!INTNUM!).jpg" >nul
-        echo   [OK] %PREFIJO% (!INTNUM!).jpg
+      if exist "%ORIGEN%\\%PREFIJO% !LP!!INTNUM!!RP!.jpg" (
+        copy "%ORIGEN%\\%PREFIJO% !LP!!INTNUM!!RP!.jpg" "%DESTINO%\\%PREFIJO% !LP!!INTNUM!!RP!.jpg" >nul
+        echo   [OK] %PREFIJO% !LP!!INTNUM!!RP!.jpg
+        set /a COUNT+=1
+        set "FOUND=1"
+      )
+    )
+
+    rem Si no aparecio con el prefijo exacto, se busca solo por numero,
+    rem con cualquier prefijo adelante. Pasa cuando el nombre real del
+    rem archivo tiene tildes o enies -por ej. LUCIA con tilde en la I-,
+    rem que la app saca del prefijo y que el .bat no puede escribir bien.
+    if "!FOUND!"=="0" (
+      for %%F in ("%ORIGEN%\\*-!RAW!.jpg" "%ORIGEN%\\* !LP!!RAW!!RP!.jpg") do (
+        copy "%%~fF" "%DESTINO%\\%%~nxF" >nul
+        echo   [OK] %%~nxF
         set /a COUNT+=1
         set "FOUND=1"
       )
     )
 
     if "!FOUND!"=="0" (
-      echo   [!!] NO ENCONTRADA: %PREFIJO%-!RAW!.jpg / %PREFIJO% (!RAW!).jpg
+      for %%F in ("%ORIGEN%\\*-!INTNUM!.jpg" "%ORIGEN%\\* !LP!!INTNUM!!RP!.jpg") do (
+        copy "%%~fF" "%DESTINO%\\%%~nxF" >nul
+        echo   [OK] %%~nxF
+        set /a COUNT+=1
+        set "FOUND=1"
+      )
+    )
+
+    if "!FOUND!"=="0" (
+      echo   [X] NO ENCONTRADA: foto numero !RAW!
       set /a MISSING+=1
     )
   )
@@ -1873,6 +1942,7 @@ document.addEventListener("click", e => {
   const clientView=e.target.closest("[data-client-view]");if(clientView){clientViewMode=clientView.dataset.clientView;renderClients();}
   const taskRoleBtn=e.target.closest("[data-task-role]");if(taskRoleBtn)setTaskRoleFilter(taskRoleBtn.dataset.taskRole);
   const renditionView=e.target.closest("[data-rendition-view]");if(renditionView){renditionViewMode=renditionView.dataset.renditionView;selectedRenditionIds.clear();renderRenditions();}
+  const renditionRoleBtn=e.target.closest("[data-rendition-role]");if(renditionRoleBtn){renditionRoleFilter=renditionRoleBtn.dataset.renditionRole;localStorage.setItem("janosRenditionRole",renditionRoleFilter);selectedRenditionIds.clear();renderRenditions();}
   const open=e.target.closest("[data-open-client]"); if(open)openClientDetail(open.dataset.openClient);
   const contact=e.target.closest("[data-contact-client]");if(contact)contactClient(contact.dataset.contactClient);
   const whatsappGroup=e.target.closest("[data-whatsapp-group]");if(whatsappGroup)openWhatsappGroup(whatsappGroup.dataset.whatsappGroup);

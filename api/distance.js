@@ -71,6 +71,11 @@ export async function handler(event) {
       originAddress: leg.start_address || origin,
       destinationAddress: leg.end_address || destination,
       routeType: type,
+      // Para dibujar la ruta elegida en el mapa de la calculadora.
+      summary: best.summary || "",
+      polyline: best.overview_polyline?.points || "",
+      start: leg.start_location || null,
+      end: leg.end_location || null,
     });
   } catch (err) {
     console.error("distance error:", err);

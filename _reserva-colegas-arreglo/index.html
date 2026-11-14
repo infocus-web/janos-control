@@ -1,0 +1,1165 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#14120f">
+<title>Cobertura entre colegas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<style>
+:root{
+  --bg-base:#14120f;
+  --bg-surface:#1e1b17;
+  --bg-surface-hover:#282420;
+  --border:#36312a;
+  --text-primary:#f2ece1;
+  --text-secondary:#a39a8d;
+  --text-tertiary:#6f675c;
+  --accent:#c79a4b;
+  --accent-strong:#dcb05f;
+  --accent-dim:rgba(199,154,75,0.14);
+  --success:#7f9c79;
+  --success-dim:rgba(127,156,121,0.14);
+  --danger:#b1503f;
+  --danger-dim:rgba(177,80,63,0.14);
+  --abierto:#4cc96a;
+  --cerrado:#e5534b;
+  --radius:10px;
+  --radius-lg:16px;
+  --serif:'Cormorant Garamond',serif;
+  --sans:'Inter',system-ui,-apple-system,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  background:var(--bg-base);
+  color:var(--text-primary);
+  font-family:var(--sans);
+  -webkit-font-smoothing:antialiased;
+  min-height:100vh;
+}
+button,input,select,textarea{font-family:inherit;color:inherit;}
+button{cursor:pointer;}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+
+.app{
+  max-width:560px;
+  margin:0 auto;
+  min-height:100vh;
+  display:flex;
+  flex-direction:column;
+  opacity:0;
+  animation:fadeIn .5s ease forwards;
+}
+@keyframes fadeIn{to{opacity:1;}}
+.hidden{display:none !important;}
+
+/* ---- topbar ---- */
+.topbar{
+  padding:22px 20px 14px;
+  display:flex;
+  align-items:baseline;
+  justify-content:space-between;
+}
+.topbar h1{
+  font-family:var(--serif);
+  font-weight:600;
+  font-size:28px;
+  letter-spacing:.3px;
+  margin:0;
+}
+.topbar .quien{
+  font-size:13px;
+  color:var(--text-secondary);
+  text-align:right;
+}
+.topbar .quien button{
+  background:none;border:none;color:var(--text-tertiary);
+  font-size:11px;text-decoration:underline;padding:0;margin-top:2px;
+}
+
+/* ---- tabs ---- */
+.tabs{
+  display:flex;
+  gap:24px;
+  padding:0 20px;
+  border-bottom:1px solid var(--border);
+}
+.tab{
+  background:none;border:none;
+  padding:10px 0 12px;
+  font-size:14px;
+  font-weight:500;
+  color:var(--text-tertiary);
+  border-bottom:2px solid transparent;
+  margin-bottom:-1px;
+}
+.tab.active{color:var(--text-primary);border-bottom-color:var(--accent);}
+
+main{flex:1;padding:18px 16px 100px;}
+.view{display:flex;flex-direction:column;gap:12px;}
+
+/* ---- pedido card ---- */
+.card{
+  background:var(--bg-surface);
+  border:1px solid var(--border);
+  border-radius:var(--radius-lg);
+  padding:16px 16px 14px;
+  position:relative;
+}
+.card.destacado{box-shadow:0 0 0 1px var(--accent);}
+.card-top{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:6px;
+}
+.estado{
+  display:flex;align-items:center;gap:6px;
+  font-family:var(--mono);
+  font-size:11px;letter-spacing:.06em;
+  color:var(--text-secondary);
+  text-transform:uppercase;
+}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--text-tertiary);flex-shrink:0;}
+.dot.abierto{
+  background:var(--abierto);
+  box-shadow:0 0 0 0 rgba(76,201,106,.5);
+  animation:pulse 2.2s ease-in-out infinite;
+}
+.dot.cerrado{background:var(--cerrado);}
+.estado.abierto{color:var(--abierto);}
+.estado.cerrado{color:var(--cerrado);}
+.card.abierto{border-color:rgba(76,201,106,.55);}
+.card.cerrado{border-color:rgba(229,83,75,.55);}
+.card.cerrado .marca path{stroke:var(--cerrado);}
+@keyframes pulse{
+  0%{box-shadow:0 0 0 0 rgba(76,201,106,.45);}
+  70%{box-shadow:0 0 0 6px rgba(76,201,106,0);}
+  100%{box-shadow:0 0 0 0 rgba(76,201,106,0);}
+}
+@media (prefers-reduced-motion:reduce){
+  .dot.abierto{animation:none;}
+}
+.fecha{font-family:var(--mono);font-size:11px;color:var(--text-tertiary);text-align:right;}
+.countdown{margin:12px 0 10px;padding:10px 12px;border:1px solid rgba(140,255,63,.38);border-radius:8px;font-family:var(--mono);font-size:13px;font-weight:700;color:#8cff3f;background:rgba(140,255,63,.06);text-shadow:0 0 10px rgba(140,255,63,.35);}
+.countdown.urgente{color:#ffbf3f;border-color:rgba(255,191,63,.42);background:rgba(255,191,63,.07);text-shadow:0 0 10px rgba(255,191,63,.3);}
+.cuando-cobertura{display:flex;flex-wrap:wrap;gap:10px 24px;margin:12px 0 10px;padding:11px 12px;background:var(--bg);border:1px solid var(--border);border-radius:10px;}
+.dato-evento{display:flex;flex-direction:column;gap:2px;min-width:150px;}
+.dato-evento .etiqueta{font-family:var(--mono);font-size:10px;letter-spacing:.06em;color:var(--text-tertiary);text-transform:uppercase;}
+.dato-evento .valor{font-size:14px;font-weight:600;color:var(--text-primary);}
+
+.card h3{
+  font-family:var(--serif);
+  font-weight:600;
+  font-size:21px;
+  margin:2px 0 4px;
+  line-height:1.2;
+}
+.card .lugar{font-size:13px;color:var(--text-secondary);margin-bottom:6px;}
+.card .desc{font-size:14px;color:var(--text-secondary);line-height:1.5;margin-bottom:10px;}
+.card .autor{font-size:12px;color:var(--text-tertiary);margin-bottom:12px;}
+.card .autor b{color:var(--text-secondary);font-weight:500;}
+
+.card-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;}
+
+.btn{
+  border:none;border-radius:999px;
+  padding:9px 18px;
+  font-size:13px;font-weight:600;
+  background:var(--accent);color:#1c1409;
+}
+.btn:disabled{background:var(--bg-surface-hover);color:var(--text-tertiary);}
+.btn.ghost{background:transparent;border:1px solid var(--border);color:var(--text-secondary);}
+.btn.danger{background:var(--danger-dim);border:1px solid var(--danger);color:#e7b7ae;}
+.btn.small{padding:6px 14px;font-size:12px;}
+.expiration-toggle{width:100%;}
+.tag{
+  font-size:11px;font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;
+  color:var(--text-tertiary);
+}
+
+/* ---- cerrado-con (editor's mark) ---- */
+.cerrado-con{
+  display:flex;align-items:center;gap:8px;
+  font-size:13px;color:var(--text-secondary);
+  padding-top:2px;
+}
+.marca{
+  width:24px;height:24px;flex-shrink:0;position:relative;
+}
+.marca svg{position:absolute;top:0;left:0;}
+.marca path{
+  fill:none;stroke:var(--success);stroke-width:1.6;stroke-linecap:round;
+  stroke-dasharray:64;stroke-dashoffset:64;
+  animation:marcar .55s ease forwards;
+}
+@keyframes marcar{to{stroke-dashoffset:0;}}
+@media (prefers-reduced-motion:reduce){
+  .marca path{animation:none;stroke-dashoffset:0;}
+}
+
+/* ---- postulantes (mis pedidos) ---- */
+.postulantes{border-top:1px solid var(--border);margin-top:10px;padding-top:10px;display:flex;flex-direction:column;gap:8px;}
+.postulante-row{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  font-size:13px;
+}
+.postulante-info{display:flex;align-items:center;gap:8px;min-width:0;}
+.postulante-info .marca{width:20px;height:20px;}
+.postulante-nombre{color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.postulante-salon{color:var(--text-tertiary);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.postulante-wa{color:var(--text-tertiary);text-decoration:none;font-size:12px;flex-shrink:0;}
+.sin-postulantes{font-size:12px;color:var(--text-tertiary);font-style:italic;}
+
+.empty{
+  text-align:center;color:var(--text-tertiary);font-size:14px;
+  padding:60px 20px;line-height:1.6;
+}
+.empty .serif{font-family:var(--serif);font-size:20px;color:var(--text-secondary);display:block;margin-bottom:6px;}
+
+/* ---- fab ---- */
+.fab{
+  position:fixed;bottom:24px;left:50%;
+  transform:translateX(calc(-50% + 220px));
+  width:56px;height:56px;border-radius:50%;
+  background:var(--accent);color:#1c1409;border:none;
+  font-size:28px;line-height:1;
+  box-shadow:0 6px 20px rgba(0,0,0,.4);
+  display:flex;align-items:center;justify-content:center;
+}
+@media (max-width:520px){
+  .fab{transform:translateX(0);right:20px;left:auto;}
+}
+
+/* ---- modal ---- */
+.modal-overlay{
+  position:fixed;inset:0;background:rgba(10,9,7,.7);
+  display:flex;align-items:flex-end;justify-content:center;
+  z-index:50;
+}
+@media (min-width:560px){
+  .modal-overlay{align-items:center;}
+}
+.modal{
+  background:var(--bg-surface);
+  border:1px solid var(--border);
+  border-radius:20px 20px 0 0;
+  width:100%;max-width:480px;
+  padding:24px 20px 28px;
+  max-height:90vh;overflow-y:auto;
+}
+@media (min-width:560px){
+  .modal{border-radius:var(--radius-lg);}
+}
+.modal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;}
+.modal-head h2{font-family:var(--serif);font-weight:600;font-size:24px;margin:0;}
+.modal-head button{background:none;border:none;color:var(--text-tertiary);font-size:22px;padding:4px;}
+
+.field{margin-bottom:16px;}
+.field label{display:block;font-size:12px;color:var(--text-secondary);margin-bottom:6px;letter-spacing:.02em;}
+.field input,.field select,.field textarea{
+  width:100%;background:var(--bg-base);
+  border:1px solid var(--border);border-radius:var(--radius);
+  padding:11px 12px;font-size:16px;color:var(--text-primary);
+}
+.field textarea{resize:vertical;min-height:80px;font-family:inherit;}
+.field input::placeholder,.field textarea::placeholder{color:var(--text-tertiary);}
+.hint{font-size:11px;color:var(--text-tertiary);margin-top:5px;}
+.phone-grid{display:grid;grid-template-columns:minmax(0,.85fr) minmax(0,1.15fr);gap:10px;}
+
+.modal-actions{display:flex;flex-direction:column;gap:10px;margin-top:6px;}
+.modal-actions .btn{width:100%;padding:13px;font-size:15px;text-align:center;}
+
+/* ---- toast ---- */
+.toast{
+  position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+  background:var(--bg-surface-hover);border:1px solid var(--border);
+  color:var(--text-primary);padding:12px 18px;border-radius:999px;
+  font-size:13px;z-index:80;box-shadow:0 6px 20px rgba(0,0,0,.4);
+  animation:toastIn .25s ease;
+}
+@keyframes toastIn{from{opacity:0;transform:translate(-50%,8px);}to{opacity:1;transform:translate(-50%,0);}}
+
+.loading{padding:60px 20px;text-align:center;color:var(--text-tertiary);font-size:13px;}
+
+.share-box{
+  background:var(--accent-dim);border:1px solid var(--accent);
+  border-radius:var(--radius);padding:14px;margin-top:6px;
+  display:flex;flex-direction:column;gap:10px;
+}
+.share-box p{margin:0;font-size:13px;color:var(--text-secondary);line-height:1.5;}
+.share-box a.btn{display:flex;align-items:center;justify-content:center;text-decoration:none;}
+</style>
+</head>
+<body>
+
+<div id="identModal" class="modal-overlay hidden">
+  <div class="modal">
+    <div class="modal-head"><h2>Antes de entrar</h2></div>
+    <p class="hint" style="margin-bottom:16px;">Así te identificamos frente al resto de colegas. Solo se pide una vez por dispositivo.</p>
+    <div class="field">
+      <label for="identNombre">Nombre</label>
+      <input id="identNombre" type="text" autocomplete="given-name">
+    </div>
+    <div class="field">
+      <label for="identApellido">Apellido</label>
+      <input id="identApellido" type="text" autocomplete="family-name">
+    </div>
+    <div class="field">
+      <label for="identSalon">¿Qué salón cubrís?</label>
+      <select id="identSalon">
+        <option value="">Seleccionar un salón</option>
+        <option value="Acceso Oeste">Acceso Oeste</option>
+        <option value="Acceso Oeste 2">Acceso Oeste 2</option>
+        <option value="Adrogue">Adrogue</option>
+        <option value="Ambulante">Ambulante</option>
+        <option value="Atelier Darwin">Atelier Darwin</option>
+        <option value="Atelier San Miguel">Atelier San Miguel</option>
+        <option value="Avellaneda 1">Avellaneda 1</option>
+        <option value="Avellaneda 2">Avellaneda 2</option>
+        <option value="Avellaneda 3">Avellaneda 3</option>
+        <option value="Avellaneda 4">Avellaneda 4</option>
+        <option value="Bakery">Bakery</option>
+        <option value="Balneario Janos">Balneario Janos</option>
+        <option value="Balneario Play">Balneario Play</option>
+        <option value="Bayres Eventos">Bayres Eventos</option>
+        <option value="Beach">Beach</option>
+        <option value="Bella Vista">Bella Vista</option>
+        <option value="Bella Vista 2">Bella Vista 2</option>
+        <option value="Benavidez 1">Benavidez 1</option>
+        <option value="Benavidez 2">Benavidez 2</option>
+        <option value="Berazategui">Berazategui</option>
+        <option value="Berazategui 2">Berazategui 2</option>
+        <option value="Berisso">Berisso</option>
+        <option value="CABA Boutique">CABA Boutique</option>
+        <option value="Caballito 1">Caballito 1</option>
+        <option value="Caballito 2">Caballito 2</option>
+        <option value="Call Center">Call Center</option>
+        <option value="Campana">Campana</option>
+        <option value="Canning">Canning</option>
+        <option value="CASM cancha">CASM cancha</option>
+        <option value="CASM sede">CASM sede</option>
+        <option value="Champagnat Boutique">Champagnat Boutique</option>
+        <option value="Cocina Danny Bramson">Cocina Danny Bramson</option>
+        <option value="Costanera 1">Costanera 1</option>
+        <option value="Costanera 2">Costanera 2</option>
+        <option value="Dardo Rocha">Dardo Rocha</option>
+        <option value="Darwin 1">Darwin 1</option>
+        <option value="Darwin 2">Darwin 2</option>
+        <option value="Degustaciones">Degustaciones</option>
+        <option value="Del Viso">Del Viso</option>
+        <option value="Deposito">Deposito</option>
+        <option value="Deposito Buen Ayre">Deposito Buen Ayre</option>
+        <option value="Deposito Hurlingham">Deposito Hurlingham</option>
+        <option value="Deposito Maschwitz">Deposito Maschwitz</option>
+        <option value="Deposito Palermo Soho">Deposito Palermo Soho</option>
+        <option value="Deposito Tecnica San Miguel">Deposito Tecnica San Miguel</option>
+        <option value="DOT">DOT</option>
+        <option value="Escobar">Escobar</option>
+        <option value="Estancia">Estancia</option>
+        <option value="Factory">Factory</option>
+        <option value="Factory Bunker">Factory Bunker</option>
+        <option value="General Rodriguez">General Rodriguez</option>
+        <option value="Haedo">Haedo</option>
+        <option value="Haedo 2">Haedo 2</option>
+        <option value="Hipodromo La Plata">Hipodromo La Plata</option>
+        <option value="Holiday Inn">Holiday Inn</option>
+        <option value="Holiday Inn 2">Holiday Inn 2</option>
+        <option value="Hotel">Hotel</option>
+        <option value="House">House</option>
+        <option value="Hudson">Hudson</option>
+        <option value="Hudson 2">Hudson 2</option>
+        <option value="Hurlingham">Hurlingham</option>
+        <option value="Ituzaingo">Ituzaingo</option>
+        <option value="Ituzaingo 2">Ituzaingo 2</option>
+        <option value="Janos GO">Janos GO</option>
+        <option value="Jose C Paz">Jose C Paz</option>
+        <option value="La Candelaria">La Candelaria</option>
+        <option value="La Fortaleza">La Fortaleza</option>
+        <option value="La Plata">La Plata</option>
+        <option value="La Plata 2">La Plata 2</option>
+        <option value="La Plata Boutique">La Plata Boutique</option>
+        <option value="La Reja">La Reja</option>
+        <option value="Liniers">Liniers</option>
+        <option value="Lomas">Lomas</option>
+        <option value="Lomas Boutique">Lomas Boutique</option>
+        <option value="Los Naranjos">Los Naranjos</option>
+        <option value="Martinez">Martinez</option>
+        <option value="Maschwitz">Maschwitz</option>
+        <option value="Merlo">Merlo</option>
+        <option value="Merlo 2">Merlo 2</option>
+        <option value="Moreno">Moreno</option>
+        <option value="Moron">Moron</option>
+        <option value="Nuñez">Nuñez</option>
+        <option value="Oficina">Oficina</option>
+        <option value="Olivos">Olivos</option>
+        <option value="Olivos 2">Olivos 2</option>
+        <option value="Palacio Sans Souci">Palacio Sans Souci</option>
+        <option value="Palermo Hollywood">Palermo Hollywood</option>
+        <option value="Palermo Soho">Palermo Soho</option>
+        <option value="Paseo Colon">Paseo Colon</option>
+        <option value="Pilar">Pilar</option>
+        <option value="Pilar boutique">Pilar boutique</option>
+        <option value="Pilar Hotel">Pilar Hotel</option>
+        <option value="Planta">Planta</option>
+        <option value="Playa Grande">Playa Grande</option>
+        <option value="Playa Grande 2">Playa Grande 2</option>
+        <option value="Puerto Madero">Puerto Madero</option>
+        <option value="Puerto Madero Boutique">Puerto Madero Boutique</option>
+        <option value="Quilmes Boutique">Quilmes Boutique</option>
+        <option value="Quinta">Quinta</option>
+        <option value="Ramos Boutique">Ramos Boutique</option>
+        <option value="Ramos Boutique 2">Ramos Boutique 2</option>
+        <option value="Ramos Mejia">Ramos Mejia</option>
+        <option value="Ramos Mejia 2">Ramos Mejia 2</option>
+        <option value="Recoleta">Recoleta</option>
+        <option value="Restaurant">Restaurant</option>
+        <option value="San Isidro">San Isidro</option>
+        <option value="San Justo">San Justo</option>
+        <option value="San Justo 2">San Justo 2</option>
+        <option value="San Martin 1">San Martin 1</option>
+        <option value="San Martin 2">San Martin 2</option>
+        <option value="San Martin 3">San Martin 3</option>
+        <option value="San Miguel">San Miguel</option>
+        <option value="San Telmo">San Telmo</option>
+        <option value="San Telmo 2">San Telmo 2</option>
+        <option value="San Telmo Boutique">San Telmo Boutique</option>
+        <option value="Shhh">Shhh</option>
+        <option value="Stadium">Stadium</option>
+        <option value="Temperley">Temperley</option>
+        <option value="TIENDA CASM">TIENDA CASM</option>
+        <option value="Vicente Lopez">Vicente Lopez</option>
+        <option value="Villa de Mayo">Villa de Mayo</option>
+        <option value="Villa de Mayo Boutique">Villa de Mayo Boutique</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>WhatsApp</label>
+      <div class="phone-grid">
+        <input id="identArea" type="tel" inputmode="numeric" placeholder="Área sin 0" autocomplete="tel-area-code">
+        <input id="identNumero" type="tel" inputmode="numeric" placeholder="Celular sin 15" autocomplete="tel-national">
+      </div>
+      <div class="hint">Para Argentina: código de área sin 0 y número de celular sin 15. La app agrega +54 9 automáticamente.</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="btnEntrar">Entrar</button>
+    </div>
+  </div>
+</div>
+
+<div id="app" class="app hidden">
+  <header class="topbar">
+    <h1>Cobertura</h1>
+    <div class="quien">
+      <div id="quienSoy"></div>
+      <button id="btnCambiar">no soy yo</button>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="pedidos">Pedidos</button>
+    <button class="tab" data-tab="mios">Mis pedidos</button>
+  </nav>
+
+  <main>
+    <section id="viewPedidos" class="view"></section>
+    <section id="viewMios" class="view hidden"></section>
+  </main>
+
+  <button class="fab" id="btnNuevo" aria-label="Publicar pedido">+</button>
+</div>
+
+<div id="formModal" class="modal-overlay hidden">
+  <div class="modal">
+    <div class="modal-head">
+      <h2>Publicar pedido</h2>
+      <button id="btnCerrarForm" aria-label="Cerrar">&times;</button>
+    </div>
+    <div id="formPasos">
+      <div class="field">
+        <label for="fProfesional">Tipo de profesional</label>
+        <select id="fProfesional">
+          <option value="">Seleccionar profesional</option>
+          <option value="Fotógrafo">Fotógrafo</option>
+          <option value="Videógrafo">Videógrafo</option>
+          <option value="Team foto y video">Team foto y video</option>
+          <option value="Editor en vivo">Editor en vivo</option>
+          <option value="Drone">Drone</option>
+          <option value="Otro">Otro (especificar)</option>
+        </select>
+      </div>
+      <div class="field hidden" id="fProfesionalOtroWrap">
+        <label for="fProfesionalOtro">¿Qué profesional necesitás?</label>
+        <input id="fProfesionalOtro" type="text" placeholder="Escribilo manualmente">
+      </div>
+      <div class="field">
+        <label for="fTipo">Tipo de cobertura</label>
+        <select id="fTipo">
+          <option value="Boda">Boda</option>
+          <option value="Cumpleaños de 15">Cumpleaños de 15</option>
+          <option value="Cumpleaños">Cumpleaños</option>
+          <option value="Bautismo">Bautismo</option>
+          <option value="Egresados">Egresados</option>
+          <option value="Evento empresarial">Evento empresarial</option>
+          <option value="Book">Book</option>
+          <option value="Otro">Otro</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="fFecha">Fecha de la cobertura</label>
+        <input id="fFecha" type="date">
+      </div>
+      <div class="field">
+        <label for="fHorario">Horario a presentarse</label>
+        <input id="fHorario" type="text" placeholder="Ej: 20:30, 21 hs, a coordinar">
+      </div>
+      <div class="field">
+        <button class="btn ghost expiration-toggle" id="btnToggleVence" type="button" aria-expanded="false">Colocar fecha de vencimiento</button>
+      </div>
+      <div class="field hidden" id="fVenceWrap">
+        <label for="fVence">Fecha y hora de vencimiento</label>
+        <input id="fVence" type="datetime-local">
+        <div class="hint">Las postulaciones se cerrarán automáticamente en ese momento.</div>
+      </div>
+      </div>
+      <div class="field">
+        <label for="fLugar">Lugar</label>
+        <input id="fLugar" type="text" placeholder="Salón, dirección o zona">
+      </div>
+      <div class="field">
+        <label for="fDesc">Descripción</label>
+        <textarea id="fDesc" placeholder="Horarios, qué se necesita cubrir, condiciones..."></textarea>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" id="btnPublicar">Publicar</button>
+      </div>
+    </div>
+    <div id="formExito" class="hidden">
+      <p style="font-size:14px;color:var(--text-secondary);margin-bottom:6px;">Pedido publicado. Ya es visible para todos los colegas dentro de la app.</p>
+      <div class="share-box">
+        <p>El grupo de WhatsApp se llena de mensajes de todo tipo - compartilo igual ahí para que se enteren más rápido, con el link directo a este pedido.</p>
+        <a class="btn" id="btnCompartirWA" target="_blank" rel="noopener">Compartir en WhatsApp</a>
+      </div>
+      <div class="modal-actions">
+        <button class="btn ghost" id="btnCerrarExito">Listo</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const SUPABASE_URL = 'https://zlxzidhsgxqifuogfren.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_xCx5iSdGKTHcWMHys9Oalw_Qpd5OooH';
+const supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+let colega = null;
+let pedidosCache = [];
+let miosCache = [];
+let tabActual = 'pedidos';
+let contadorInterval = null;
+
+// ---------- utilidades ----------
+function $(sel){ return document.querySelector(sel); }
+function $all(sel){ return document.querySelectorAll(sel); }
+function esc(str){
+  const d = document.createElement('div');
+  d.textContent = str == null ? '' : String(str);
+  return d.innerHTML;
+}
+function formatFecha(iso){
+  if(!iso) return '';
+  const f = new Date(iso + 'T00:00:00');
+  return f.toLocaleDateString('es-AR',{day:'numeric',month:'short'}).replace('.','');
+}
+function formatFechaCobertura(iso){
+  if(!iso) return '';
+  const f = new Date(iso + 'T00:00:00');
+  const texto = f.toLocaleDateString('es-AR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  return texto.charAt(0).toUpperCase() + texto.slice(1);
+}
+function formatFechaPublicacion(iso){
+  if(!iso) return '';
+  const f = new Date(iso);
+  const fecha = f.toLocaleDateString('es-AR',{day:'numeric',month:'short'}).replace('.','');
+  const hora = f.toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'});
+  return 'Publicado ' + fecha + ', ' + hora;
+}
+function valorFechaHoraLocal(fecha){
+  const local = new Date(fecha.getTime() - fecha.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0,16);
+}
+function textoCuentaRegresiva(ms){
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const dias = Math.floor(total / 86400);
+  const horas = Math.floor((total % 86400) / 3600);
+  const minutos = Math.floor((total % 3600) / 60);
+  const segundos = total % 60;
+  const dos = n => String(n).padStart(2,'0');
+  return (dias ? dias + 'd ' : '') + dos(horas) + ':' + dos(minutos) + ':' + dos(segundos);
+}
+function iniciarContadores(){
+  if(contadorInterval) clearInterval(contadorInterval);
+  actualizarContadores();
+  contadorInterval = setInterval(actualizarContadores, 1000);
+}
+function actualizarContadores(){
+  const ahora = Date.now();
+  $all('.countdown[data-vence]').forEach(el=>{
+    const restante = new Date(el.dataset.vence).getTime() - ahora;
+    el.classList.toggle('urgente', restante <= 6 * 60 * 60 * 1000);
+    if(restante > 0){
+      el.textContent = 'Vence en ' + textoCuentaRegresiva(restante);
+      return;
+    }
+    el.textContent = 'Postulación cerrada';
+    if(!el.dataset.procesando){
+      el.dataset.procesando = '1';
+      procesarVencimiento(el.dataset.pedidoId);
+    }
+  });
+}
+async function procesarVencimiento(pedidoId){
+  const { count, error } = await supa
+    .from('postulaciones')
+    .select('id', { count:'exact', head:true })
+    .eq('pedido_id', pedidoId);
+  if(error){ console.error(error); return; }
+  if(count === 0){
+    const { error: errorVencer } = await supa
+      .from('pedidos')
+      .update({ estado:'eliminado' })
+      .eq('id', pedidoId)
+      .eq('estado', 'abierto');
+    if(errorVencer){ console.error(errorVencer); return; }
+    await cargarPedidos();
+    if(tabActual === 'mios') await cargarMios();
+    return;
+  }
+  const btn = document.getElementById('post-' + pedidoId);
+  if(btn){ btn.disabled = true; btn.textContent = 'Postulación cerrada'; }
+}
+function soloDigitos(str){
+  return (str || '').replace(/[^\d+]/g,'');
+}
+function normalizarWhatsappArgentino(areaRaw, numeroRaw){
+  let area = (areaRaw || '').replace(/\D/g,'');
+  let numero = (numeroRaw || '').replace(/\D/g,'');
+  area = area.replace(/^0+/, '');
+  numero = numero.replace(/^15/, '');
+  if(!area || !numero) return '';
+  return '549' + area + numero;
+}
+function linkWhatsApp(numero){
+  const limpio = (numero || '').replace(/[^\d]/g,'');
+  return 'https://wa.me/' + limpio;
+}
+function mostrarToast(msg){
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(()=>t.remove(), 2800);
+}
+const marcaSVG = '<svg viewBox="0 0 24 24" width="100%" height="100%"><path d="M12 2.3c-3 0-9.2 1-9.6 8.4-.4 7 5.6 11 9.7 10.9 4.3-.1 9.7-3.9 9.5-10.6C21.3 4.2 15.4 2.3 12 2.3z"/></svg>';
+
+// ---------- identificación ----------
+function cargarColega(){
+  try{
+    const raw = localStorage.getItem('cobertura_colega');
+    return raw ? JSON.parse(raw) : null;
+  }catch(e){ return null; }
+}
+function guardarColega(c){
+  localStorage.setItem('cobertura_colega', JSON.stringify(c));
+}
+async function identificarse(nombre, apellido, whatsapp, salon){
+  const { data: existente, error: errBuscar } = await supa
+    .from('colegas').select('*').eq('whatsapp', whatsapp).maybeSingle();
+  if(errBuscar) throw errBuscar;
+  if(existente){
+    if(salon && existente.salon !== salon){
+      const { data: actualizado, error: errActualizar } = await supa
+        .from('colegas')
+        .update({ nombre, apellido, salon })
+        .eq('id', existente.id)
+        .select()
+        .single();
+      if(!errActualizar && actualizado) return actualizado;
+    }
+    return existente;
+  }
+  const perfil = { nombre, apellido, whatsapp, salon };
+  let { data: creado, error: errCrear } = await supa
+    .from('colegas').insert(perfil).select().single();
+  if(errCrear && String(errCrear.message || '').includes("'salon' column")){
+    ({ data: creado, error: errCrear } = await supa
+      .from('colegas').insert({ nombre, apellido, whatsapp }).select().single());
+  }
+  if(errCrear) throw errCrear;
+  return creado;
+}
+
+$('#btnEntrar').addEventListener('click', async ()=>{
+  const nombre = $('#identNombre').value.trim();
+  const apellido = $('#identApellido').value.trim();
+  const salon = $('#identSalon').value.trim();
+  const area = $('#identArea').value.trim();
+  const numero = $('#identNumero').value.trim();
+  const whatsapp = normalizarWhatsappArgentino(area, numero);
+  if(!nombre || !apellido || !salon || !area || !numero){
+    mostrarToast('Completá nombre, apellido, salón, área y celular');
+    return;
+  }
+  if(whatsapp.length < 12){
+    mostrarToast('Revisá el código de área y el celular');
+    return;
+  }
+  const btn = $('#btnEntrar');
+  btn.disabled = true; btn.textContent = 'Entrando...';
+  try{
+    colega = await identificarse(nombre, apellido, whatsapp, salon);
+    guardarColega(colega);
+    $('#identModal').classList.add('hidden');
+    iniciarApp();
+  }catch(e){
+    console.error(e);
+    mostrarToast('No se pudo identificar, probá de nuevo');
+    btn.disabled = false; btn.textContent = 'Entrar';
+  }
+});
+
+$('#btnCambiar').addEventListener('click', ()=>{
+  if(!confirm('¿Cambiar de identidad en este dispositivo?')) return;
+  localStorage.removeItem('cobertura_colega');
+  location.reload();
+});
+
+// ---------- render: pedidos abiertos ----------
+function renderPedidos(){
+  const cont = $('#viewPedidos');
+  if(!pedidosCache.length){
+    cont.innerHTML = '<div class="empty"><span class="serif">No hay pedidos abiertos</span>Cuando alguien necesite cobertura, va a aparecer acá.</div>';
+    return;
+  }
+  cont.innerHTML = pedidosCache.map(p => renderCardPedido(p)).join('');
+  pedidosCache.forEach(p=>{
+    const btn = document.getElementById('post-' + p.id);
+    if(btn && !btn.disabled){
+      btn.addEventListener('click', ()=>postularme(p.id));
+    }
+  });
+  iniciarContadores();
+}
+
+function renderCardPedido(p){
+  const esMio = colega && p.autor_id === colega.id;
+  const yaPostulado = p._yaPostulado;
+  const destacado = p._destacado ? ' destacado' : '';
+  const autorNombre = p.autor ? (p.autor.nombre + ' ' + p.autor.apellido) : 'colega';
+  const vencimientoCumplido = p.vence_en && new Date(p.vence_en).getTime() <= Date.now();
+  let accion = '';
+  if(p.estado === 'cerrado'){
+    const elegidoNombre = p.elegido ? (p.elegido.nombre + ' ' + p.elegido.apellido) : 'un colega';
+    accion = '<div class="cerrado-con"><span class="marca">' + marcaSVG + '</span>Cerrado con <b>' + esc(elegidoNombre) + '</b></div>';
+  } else if(vencimientoCumplido){
+    accion = esMio ? '<span class="tag">es tu pedido</span>' : '<button class="btn small" disabled>Postulación cerrada</button>';
+  } else if(esMio){
+    accion = '<span class="tag">es tu pedido</span>';
+  } else if(yaPostulado){
+    accion = '<button class="btn small" disabled>Ya te postulaste</button>';
+  } else {
+    accion = '<button class="btn small" id="post-' + p.id + '">Postularme</button>';
+  }
+  return [
+    '<div class="card ', (p.estado==='abierto'?'abierto':'cerrado'), destacado, '" id="pedido-' + p.id + '">',
+    '<div class="card-top">',
+      '<div class="estado ', (p.estado==='abierto'?'abierto':'cerrado'), '"><span class="dot ', (p.estado==='abierto'?'abierto':'cerrado'), '"></span>', (p.estado==='abierto'?'Abierto':'Cerrado'), '</div>',
+      '<div class="fecha">', esc(formatFechaPublicacion(p.created_at)), '</div>',
+    '</div>',
+    '<h3>', esc(p.tipo_evento), '</h3>',
+    p.tipo_profesional ? '<div class="lugar"><b>Profesional:</b> ' + esc(p.tipo_profesional) + '</div>' : '',
+    (p.fecha_evento || p.horario_presentarse) ? '<div class="cuando-cobertura">' +
+      (p.fecha_evento ? '<div class="dato-evento"><span class="etiqueta">Fecha de cobertura</span><span class="valor">' + esc(formatFechaCobertura(p.fecha_evento)) + '</span></div>' : '') +
+      (p.horario_presentarse ? '<div class="dato-evento"><span class="etiqueta">Hora de presentaci&oacute;n</span><span class="valor">' + esc(p.horario_presentarse) + '</span></div>' : '') +
+    '</div>' : '',
+    p.lugar ? '<div class="lugar"><b>Lugar:</b> ' + esc(p.lugar) + '</div>' : '',
+    p.descripcion ? '<div class="desc">' + esc(p.descripcion) + '</div>' : '',
+    '<div class="autor">Publicado por <b>', esc(autorNombre), '</b></div>',
+    p.vence_en ? '<div class="countdown" data-pedido-id="' + esc(p.id) + '" data-vence="' + esc(p.vence_en) + '">Calculando vencimiento...</div>' : '',
+    '<div class="card-actions">', accion, '</div>',
+    '</div>'
+  ].join('');
+}
+
+async function postularme(pedidoId){
+  try{
+    const { error } = await supa.from('postulaciones').insert({ pedido_id: pedidoId, colega_id: colega.id });
+    if(error){
+      if(error.code === '23505'){ mostrarToast('Ya te habías postulado a este pedido'); }
+      else { throw error; }
+    } else {
+      mostrarToast('Postulación enviada');
+    }
+    await cargarPedidos();
+  }catch(e){
+    console.error(e);
+    mostrarToast('No se pudo postular, probá de nuevo');
+  }
+}
+
+async function cargarPedidos(){
+  const { data: pedidos, error } = await supa
+    .from('pedidos')
+    .select('id, tipo_evento, tipo_profesional, vence_en, fecha_evento, horario_presentarse, lugar, descripcion, estado, autor_id, created_at, autor:colegas!pedidos_autor_id_fkey(nombre,apellido), elegido:colegas!pedidos_elegido_id_fkey(nombre,apellido)')
+    .eq('estado', 'abierto')
+    .order('created_at', { ascending:false });
+  if(error){ console.error(error); return; }
+
+  let postuladosIds = new Set();
+  if(colega){
+    const { data: mias } = await supa.from('postulaciones').select('pedido_id').eq('colega_id', colega.id);
+    if(mias) postuladosIds = new Set(mias.map(m=>m.pedido_id));
+  }
+  if(pedidos.length){
+    const ids = pedidos.map(p=>p.id);
+    const { data: todasLasPostulaciones } = await supa.from('postulaciones').select('pedido_id').in('pedido_id', ids);
+    const cantidades = new Map();
+    (todasLasPostulaciones || []).forEach(post=>cantidades.set(post.pedido_id, (cantidades.get(post.pedido_id) || 0) + 1));
+    pedidos.forEach(p=>{ p._postulacionesCount = cantidades.get(p.id) || 0; });
+    const vencidosSinPostulantes = pedidos.filter(p=>p.vence_en && new Date(p.vence_en).getTime() <= Date.now() && p._postulacionesCount === 0);
+    if(vencidosSinPostulantes.length){
+      await Promise.all(vencidosSinPostulantes.map(p=>supa.from('pedidos').update({ estado:'eliminado' }).eq('id',p.id).eq('estado','abierto')));
+      const visibles = pedidos.filter(p=>!vencidosSinPostulantes.some(v=>v.id===p.id));
+      pedidos.splice(0,pedidos.length,...visibles);
+    }
+  }
+  pedidos.forEach(p => { p._yaPostulado = postuladosIds.has(p.id); });
+
+  const params = new URLSearchParams(location.search);
+  const destacadoId = params.get('pedido');
+  if(destacadoId && !pedidos.some(p=>p.id===destacadoId)){
+    const { data: extra } = await supa
+      .from('pedidos')
+      .select('id, tipo_evento, tipo_profesional, vence_en, fecha_evento, horario_presentarse, lugar, descripcion, estado, autor_id, created_at, autor:colegas!pedidos_autor_id_fkey(nombre,apellido), elegido:colegas!pedidos_elegido_id_fkey(nombre,apellido)')
+      .eq('id', destacadoId).maybeSingle();
+    if(extra && extra.estado !== 'eliminado'){ extra._destacado = true; pedidos.unshift(extra); }
+  } else if(destacadoId){
+    pedidos.forEach(p=>{ if(p.id===destacadoId) p._destacado = true; });
+  }
+
+  pedidosCache = pedidos;
+  renderPedidos();
+}
+
+// ---------- render: mis pedidos ----------
+function renderMios(){
+  const cont = $('#viewMios');
+  if(!miosCache.length){
+    cont.innerHTML = '<div class="empty"><span class="serif">Todavía no publicaste nada</span>Tocá el botón + para pedir cobertura.</div>';
+    return;
+  }
+  cont.innerHTML = miosCache.map(p => renderCardMio(p)).join('');
+  iniciarContadores();
+  miosCache.forEach(p=>{
+    const borrarBtn = document.getElementById('borrar-' + p.id);
+    if(borrarBtn) borrarBtn.addEventListener('click', ()=>borrarPedido(p.id));
+    if(p.estado === 'abierto' && p.postulaciones){
+      p.postulaciones.forEach(post=>{
+        const btn = document.getElementById('elegir-' + p.id + '-' + post.colega.id);
+        if(btn) btn.addEventListener('click', ()=>elegirPostulante(p, post.colega));
+      });
+    }
+  });
+}
+
+function renderCardMio(p){
+  let postulantesHTML = '';
+  if(p.estado === 'abierto'){
+    if(p.postulaciones && p.postulaciones.length){
+      postulantesHTML = '<div class="postulantes">' + p.postulaciones.map(post => [
+        '<div class="postulante-row">',
+          '<div class="postulante-info"><div style="min-width:0;"><div class="postulante-nombre">', esc(post.colega.nombre + ' ' + post.colega.apellido), '</div>',
+          post.colega.salon ? '<div class="postulante-salon">' + esc(post.colega.salon) + '</div>' : '', '</div>',
+          '<a class="postulante-wa" href="', linkWhatsApp(post.colega.whatsapp), '" target="_blank" rel="noopener">WhatsApp</a></div>',
+          '<button class="btn small ghost" id="elegir-' + p.id + '-' + post.colega.id + '">Elegir y avisar</button>',
+        '</div>'
+      ].join('')).join('') + '</div>';
+    } else {
+      postulantesHTML = '<div class="postulantes"><div class="sin-postulantes">Todavía nadie se postuló</div></div>';
+    }
+  } else {
+    const elegido = p.postulaciones ? p.postulaciones.find(post => post.colega.id === p.elegido_id) : null;
+    const nombreElegido = elegido ? (elegido.colega.nombre + ' ' + elegido.colega.apellido) : 'colega elegido';
+    postulantesHTML = '<div class="postulantes"><div class="cerrado-con"><span class="marca">' + marcaSVG + '</span>Cerrado con <b>' + esc(nombreElegido) + '</b></div></div>';
+  }
+  return [
+    '<div class="card ', (p.estado==='abierto'?'abierto':'cerrado'), '">',
+    '<div class="card-top">',
+      '<div class="estado ', (p.estado==='abierto'?'abierto':'cerrado'), '"><span class="dot ', (p.estado==='abierto'?'abierto':'cerrado'), '"></span>', (p.estado==='abierto'?'Abierto':'Cerrado'), '</div>',
+      '<div class="fecha">', esc(formatFechaPublicacion(p.created_at)), '</div>',
+    '</div>',
+    '<h3>', esc(p.tipo_evento), '</h3>',
+    p.tipo_profesional ? '<div class="lugar"><b>Profesional:</b> ' + esc(p.tipo_profesional) + '</div>' : '',
+    (p.fecha_evento || p.horario_presentarse) ? '<div class="cuando-cobertura">' +
+      (p.fecha_evento ? '<div class="dato-evento"><span class="etiqueta">Fecha de cobertura</span><span class="valor">' + esc(formatFechaCobertura(p.fecha_evento)) + '</span></div>' : '') +
+      (p.horario_presentarse ? '<div class="dato-evento"><span class="etiqueta">Hora de presentaci&oacute;n</span><span class="valor">' + esc(p.horario_presentarse) + '</span></div>' : '') +
+    '</div>' : '',
+    p.lugar ? '<div class="lugar"><b>Lugar:</b> ' + esc(p.lugar) + '</div>' : '',
+    p.vence_en ? '<div class="countdown" data-pedido-id="' + esc(p.id) + '" data-vence="' + esc(p.vence_en) + '">Calculando vencimiento...</div>' : '',
+    postulantesHTML,
+    '<div class="card-actions" style="margin-top:12px;"><button class="btn small danger" id="borrar-' + p.id + '">Eliminar pedido</button></div>',
+    '</div>'
+  ].join('');
+}
+
+async function borrarPedido(pedidoId){
+  if(!confirm('¿Eliminar este pedido? Va a dejar de aparecer para todos.')) return;
+  try{
+    const { error } = await supa
+      .from('pedidos')
+      .update({ estado:'eliminado' })
+      .eq('id', pedidoId)
+      .eq('autor_id', colega.id);
+    if(error) throw error;
+    mostrarToast('Pedido eliminado');
+    await cargarMios();
+    await cargarPedidos();
+  }catch(e){
+    console.error(e);
+    mostrarToast('No se pudo eliminar el pedido');
+  }
+}
+
+async function elegirPostulante(pedido, elegido){
+  const nombreElegido = elegido.nombre + ' ' + elegido.apellido;
+  if(!confirm('¿Confirmás que el pedido queda cerrado con ' + nombreElegido + '? Se abrirá WhatsApp para avisarle.')) return;
+
+  const ventanaWhatsApp = window.open('about:blank', '_blank');
+  try{
+    const { error } = await supa
+      .from('pedidos')
+      .update({ estado:'cerrado', elegido_id: elegido.id })
+      .eq('id', pedido.id)
+      .eq('autor_id', colega.id);
+    if(error) throw error;
+
+    const mensaje = [
+      'Hola ' + elegido.nombre + ', te confirmo que quedaste seleccionado para la cobertura de ' + pedido.tipo_evento + '.',
+      pedido.tipo_profesional ? 'Profesional solicitado: ' + pedido.tipo_profesional + '.' : '',
+      pedido.fecha_evento ? 'Fecha: ' + formatFecha(pedido.fecha_evento) + '.' : '',
+      pedido.horario_presentarse ? 'Horario a presentarse: ' + pedido.horario_presentarse + '.' : '',
+      pedido.lugar ? 'Lugar: ' + pedido.lugar + '.' : '',
+      'Por favor, confirmame la recepción de este mensaje.'
+    ].filter(Boolean).join('\n');
+    const urlWhatsApp = linkWhatsApp(elegido.whatsapp) + '?text=' + encodeURIComponent(mensaje);
+
+    mostrarToast('Pedido cerrado. Abriendo WhatsApp...');
+    if(ventanaWhatsApp){
+      ventanaWhatsApp.location.href = urlWhatsApp;
+    } else {
+      location.href = urlWhatsApp;
+    }
+    await cargarMios();
+    await cargarPedidos();
+  }catch(e){
+    if(ventanaWhatsApp) ventanaWhatsApp.close();
+    console.error(e);
+    mostrarToast('No se pudo cerrar el pedido');
+  }
+}
+
+async function cargarMios(){
+  if(!colega) return;
+  const { data: pedidos, error } = await supa
+    .from('pedidos')
+    .select('id, tipo_evento, tipo_profesional, vence_en, fecha_evento, horario_presentarse, lugar, descripcion, estado, elegido_id, created_at')
+    .eq('autor_id', colega.id)
+    .neq('estado', 'eliminado')
+    .order('created_at', { ascending:false });
+  if(error){ console.error(error); return; }
+  for(const p of pedidos){
+    const { data: postulaciones } = await supa
+      .from('postulaciones')
+      .select('id, colega:colegas!postulaciones_colega_id_fkey(id,nombre,apellido,whatsapp,salon)')
+      .eq('pedido_id', p.id)
+      .order('created_at', { ascending:true });
+    p.postulaciones = postulaciones || [];
+  }
+  miosCache = pedidos;
+  renderMios();
+}
+
+// ---------- tabs ----------
+$all('.tab').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    tabActual = btn.dataset.tab;
+    $all('.tab').forEach(b=>b.classList.toggle('active', b===btn));
+    $('#viewPedidos').classList.toggle('hidden', tabActual!=='pedidos');
+    $('#viewMios').classList.toggle('hidden', tabActual!=='mios');
+    if(tabActual === 'mios') cargarMios();
+  });
+});
+
+// ---------- formulario nuevo pedido ----------
+let ultimoPedidoCreado = null;
+// Id reservado para el pedido que se está cargando. Se genera al abrir el formulario y se
+// reutiliza en cada intento de "Publicar": si el primer intento se guardó pero la respuesta
+// no llegó (o el usuario vuelve a tocar el botón), el reintento no puede crear un duplicado.
+let idPedidoEnCurso = null;
+let publicando = false;
+
+function nuevoIdPedido(){
+  if(window.crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c=>{
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+
+// Busca si un pedido con ese id ya quedó guardado (2 intentos, por si el servidor todavía lo está procesando)
+async function buscarPedidoGuardado(id){
+  for(let intento = 0; intento < 2; intento++){
+    try{
+      const { data } = await supa.from('pedidos').select().eq('id', id).maybeSingle();
+      if(data) return data;
+    }catch(e){ console.warn('No se pudo verificar el pedido', e); }
+    if(intento === 0) await new Promise(r=>setTimeout(r, 1500));
+  }
+  return null;
+}
+
+$('#btnNuevo').addEventListener('click', ()=>{
+  idPedidoEnCurso = nuevoIdPedido();
+  $('#formPasos').classList.remove('hidden');
+  $('#formExito').classList.add('hidden');
+  $('#fTipo').value = 'Boda';
+  $('#fProfesional').value = '';
+  $('#fProfesionalOtro').value = '';
+  $('#fProfesionalOtroWrap').classList.add('hidden');
+  $('#fFecha').value = '';
+  $('#fHorario').value = '';
+  $('#fVence').value = '';
+  $('#fVenceWrap').classList.add('hidden');
+  $('#btnToggleVence').textContent = 'Colocar fecha de vencimiento';
+  $('#btnToggleVence').setAttribute('aria-expanded','false');
+  $('#fLugar').value = '';
+  $('#fDesc').value = '';
+  $('#formModal').classList.remove('hidden');
+});
+$('#fProfesional').addEventListener('change', ()=>{
+  const esOtro = $('#fProfesional').value === 'Otro';
+  $('#fProfesionalOtroWrap').classList.toggle('hidden', !esOtro);
+  if(!esOtro) $('#fProfesionalOtro').value = '';
+});
+$('#btnToggleVence').addEventListener('click', ()=>{
+  const activar = $('#fVenceWrap').classList.contains('hidden');
+  $('#fVenceWrap').classList.toggle('hidden', !activar);
+  $('#btnToggleVence').textContent = activar ? 'Quitar vencimiento' : 'Colocar fecha de vencimiento';
+  $('#btnToggleVence').setAttribute('aria-expanded', String(activar));
+  if(activar){
+    $('#fVence').min = valorFechaHoraLocal(new Date(Date.now() + 5 * 60 * 1000));
+  } else {
+    $('#fVence').value = '';
+  }
+});
+$('#btnCerrarForm').addEventListener('click', ()=>$('#formModal').classList.add('hidden'));
+$('#btnCerrarExito').addEventListener('click', async ()=>{
+  $('#formModal').classList.add('hidden');
+  await cargarPedidos();
+  if(tabActual === 'mios') await cargarMios();
+});
+
+$('#btnPublicar').addEventListener('click', async ()=>{
+  const tipo_evento = $('#fTipo').value;
+  const profesionalElegido = $('#fProfesional').value;
+  const tipo_profesional = profesionalElegido === 'Otro'
+    ? $('#fProfesionalOtro').value.trim()
+    : profesionalElegido;
+  const fecha_evento = $('#fFecha').value || null;
+  const horario_presentarse = $('#fHorario').value.trim();
+  const vencimientoActivo = !$('#fVenceWrap').classList.contains('hidden');
+  const venceValor = vencimientoActivo ? $('#fVence').value : '';
+  const venceFecha = venceValor ? new Date(venceValor) : null;
+  const vence_en = venceFecha && !Number.isNaN(venceFecha.getTime()) ? venceFecha.toISOString() : null;
+  const lugar = $('#fLugar').value.trim();
+  const descripcion = $('#fDesc').value.trim();
+  if(!tipo_profesional){
+    mostrarToast('Seleccioná o escribí el profesional que necesitás');
+    return;
+  }
+  if(vencimientoActivo && (!vence_en || new Date(vence_en).getTime() <= Date.now())){
+    mostrarToast('Elegí una fecha y hora de vencimiento futura');
+    return;
+  }
+  if(publicando) return;
+  if(!idPedidoEnCurso) idPedidoEnCurso = nuevoIdPedido();
+  const idPedido = idPedidoEnCurso;
+  const btn = $('#btnPublicar');
+  publicando = true;
+  btn.disabled = true; btn.textContent = 'Publicando...';
+  try{
+    let { data, error } = await supa.from('pedidos').insert({
+      id: idPedido, autor_id: colega.id, tipo_evento, tipo_profesional, vence_en, fecha_evento, horario_presentarse, lugar, descripcion, estado:'abierto'
+    }).select().single();
+    if(error){
+      // Si el pedido ya quedó guardado (respuesta perdida o reintento), lo recuperamos en vez de crear otro
+      const existente = await buscarPedidoGuardado(idPedido);
+      if(existente){ data = existente; error = null; }
+    }
+    if(error) throw error;
+    idPedidoEnCurso = null; // el próximo pedido usará un id nuevo
+    ultimoPedidoCreado = data;
+    const url = location.origin + location.pathname + '?pedido=' + data.id;
+    const texto = 'Necesito cobertura: ' + tipo_evento + ' - Profesional: ' + tipo_profesional + (fecha_evento ? ' el ' + formatFecha(fecha_evento) : '') + (horario_presentarse ? ' - Presentarse: ' + horario_presentarse : '') + (lugar ? ' en ' + lugar : '') + '. Postulate acá -> ' + url;
+    $('#btnCompartirWA').href = 'https://wa.me/?text=' + encodeURIComponent(texto);
+    $('#formPasos').classList.add('hidden');
+    $('#formExito').classList.remove('hidden');
+  }catch(e){
+    console.error('Error al publicar el pedido', e);
+    const detalle = e && e.message ? ' (' + e.message + ')' : '';
+    mostrarToast('No se pudo publicar el pedido' + detalle);
+  }finally{
+    publicando = false;
+    btn.disabled = false; btn.textContent = 'Publicar';
+  }
+});
+
+// ---------- realtime ----------
+function suscribirRealtime(){
+  supa.channel('public:pedidos')
+    .on('postgres_changes', { event:'*', schema:'public', table:'pedidos' }, ()=>{
+      cargarPedidos();
+      if(tabActual === 'mios') cargarMios();
+    })
+    .subscribe();
+  supa.channel('public:postulaciones')
+    .on('postgres_changes', { event:'*', schema:'public', table:'postulaciones' }, ()=>{
+      cargarPedidos();
+      if(tabActual === 'mios') cargarMios();
+    })
+    .subscribe();
+}
+
+// ---------- arranque ----------
+async function iniciarApp(){
+  $('#quienSoy').textContent = colega.nombre + ' ' + colega.apellido;
+  $('#app').classList.remove('hidden');
+  $('#viewPedidos').innerHTML = '<div class="loading">Cargando pedidos...</div>';
+  await cargarPedidos();
+  suscribirRealtime();
+}
+
+(function start(){
+  colega = cargarColega();
+  if(colega){
+    iniciarApp();
+  } else {
+    $('#identModal').classList.remove('hidden');
+  }
+})();
+</script>
+</body>
+</html>
