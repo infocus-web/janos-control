@@ -90,10 +90,12 @@ Ideal 60 fotos como máximo, enumeradas de 001 a 060, con una canción de al men
 Suban las fotos a una carpeta de Drive y pásennos el link con acceso de "lector" para que podamos entrar y descargarlas.
 
 Video backstage (filmación del book)
-Dylan elige la música porque por experiencia sabe cuál se ajusta mejor al video, pero si quieren algo puntual, pueden consultarle por acá — está en el grupo.
+Generalmente nosotros elegimos la música porque por experiencia sabemos cuál se ajusta mejor al video, pero si quieren algo puntual, pueden consultarnos.
 
 Fechas y locaciones para el book y el video backstage
-Sugerimos usar las instalaciones de alguno de los salones de Jano's, por seguridad y comodidad al momento de cambiarse: {salonesSesion}. Quedan sujetos a disponibilidad (y a cancelaciones si surge un evento ese día), así que tenemos que coordinar una fecha en la que coincidamos nosotros, ustedes, y que el lugar esté libre.
+Sugerimos usar las instalaciones de alguno de los salones de Jano's, por seguridad y comodidad al momento de cambiarse: {salonesSesion}. Quedan sujetos a disponibilidad, así que tenemos que coordinar una fecha en la que coincidamos nosotros, ustedes, y que el lugar esté libre.
+
+Tengan en cuenta que el salón que elijamos puede cancelarse si surge un evento ese día: estamos en temporada de eventos empresariales y escolares, y durante la semana se hacen muchos eventos corporativos. Si pasa, no se preocupen: hacemos la sesión en otro salón cercano.
 
 Fuera de Jano's hay lugares dedicados para hacer fotos, como Equiland o Lagos del Rocío, que tienen un costo aparte (no incluido en el servicio) y que tendrían que contratar ustedes directamente.
 
@@ -708,7 +710,7 @@ function whatsappMessage(client){const template=whatsappTemplateForType(client.t
 // guardadas en state.settings.speechTemplates. Editables en Configuración,
 // con el mismo patrón de "Restaurar mensaje original" que los de arriba.
 function speechTemplates(){const map=state.settings?.speechTemplates;return (map&&typeof map==="object")?map:{};}
-function speechTemplateFor(key){const def=SPEECH_TYPES.find(s=>s.key===key)?.default||"";return speechTemplates()[key]||def;}
+function speechTemplateFor(key){const def=SPEECH_TYPES.find(s=>s.key===key)?.default||"";return (speechTemplates()[key]||def).replace(/(?:Dylan|\{remitente\}) elige la música porque[^\n]*/g,"Generalmente nosotros elegimos la música porque por experiencia sabemos cuál se ajusta mejor al video, pero si quieren algo puntual, pueden consultarnos.").replace("Quedan sujetos a disponibilidad (y a cancelaciones si surge un evento ese día), así que tenemos que coordinar una fecha en la que coincidamos nosotros, ustedes, y que el lugar esté libre.","Quedan sujetos a disponibilidad, así que tenemos que coordinar una fecha en la que coincidamos nosotros, ustedes, y que el lugar esté libre.\n\nTengan en cuenta que el salón que elijamos puede cancelarse si surge un evento ese día: estamos en temporada de eventos empresariales y escolares, y durante la semana se hacen muchos eventos corporativos. Si pasa, no se preocupen: hacemos la sesión en otro salón cercano.");}
 function speechMessage(client,key){return fillTemplate(speechTemplateFor(key),messagePlaceholderValues(client));}
 function saveSpeechTemplates(){const updated={};SPEECH_TYPES.forEach(s=>{const value=document.querySelector(`[data-speech-template="${CSS.escape(s.key)}"]`)?.value.trim()||"";updated[s.key]=value||s.default;});state.settings={...(state.settings||{}),speechTemplates:updated};saveState();renderSettings();toast("Mensajes de grupo guardados");}
 // Copia el speech al portapapeles y abre el grupo de WhatsApp guardado en
@@ -1672,135 +1674,61 @@ function generateSelectionBat(clientId) {
   if (!prefijo) { toast("El prefijo solo puede tener letras, números, guiones y guión bajo."); return; }
   const tokens = numerosRaw.replace(/[-,_./\\;|\s]+/g, ' ').trim().split(/\s+/).filter(Boolean).map(t => t.replace(/[^0-9]/g, "")).filter(Boolean);
   if (!tokens.length) { toast("No se encontraron números válidos."); return; }
-  const bat = `@echo off
-setlocal enabledelayedexpansion
-set "LP=("
-set "RP=)"
-echo ================================================
-echo     COPIADOR DE SELECCION - ${prefijo}
-echo ================================================
-echo.
 
-set /p "ORIGEN=Pega la ruta de la carpeta con las fotos: "
-set "PREFIJO=${prefijo}"
-set "DESTINO=%USERPROFILE%\\Desktop\\SELECCION_${prefijo}"
-if not exist "%DESTINO%" mkdir "%DESTINO%"
-
-echo.
-echo Origen:  %ORIGEN%
-echo Prefijo: %PREFIJO%
-echo Destino: %DESTINO%
-echo.
-echo Copiando fotos seleccionadas...
-echo.
-
-set COUNT=0
-set MISSING=0
-
-set "TMPFILE=%TEMP%\\numeros_tmp_%RANDOM%.txt"
-(
-${tokens.map(n => `  echo ${n}`).join('\r\n')}
-) > "!TMPFILE!"
-
-for /f "usebackq tokens=* delims=" %%N in ("!TMPFILE!") do (
-  set "RAW=%%N"
-  set "RAW=!RAW: =!"
-  set "FOUND=0"
-
-  if not "!RAW!"=="" (
-    rem Saca los ceros a la izquierda como texto (NO con "set /a": cmd
-    rem interpreta cualquier numero que arranca con 0 como octal, y
-    rem numeros con 8 o 9 -como 069 u 097- tiran error directamente, mientras
-    rem que otros -como 023- se leen mal en silencio y copian el archivo
-    rem equivocado sin avisar). Se repite la resta de un cero varias veces
-    rem en vez de usar un loop con goto, que dentro de un bloque for /f
-    rem entre parentesis es poco confiable en cmd.exe.
-    set "INTNUM=!RAW!"
-    if "!INTNUM:~0,1!"=="0" if not "!INTNUM!"=="0" set "INTNUM=!INTNUM:~1!"
-    if "!INTNUM:~0,1!"=="0" if not "!INTNUM!"=="0" set "INTNUM=!INTNUM:~1!"
-    if "!INTNUM:~0,1!"=="0" if not "!INTNUM!"=="0" set "INTNUM=!INTNUM:~1!"
-    if "!INTNUM:~0,1!"=="0" if not "!INTNUM!"=="0" set "INTNUM=!INTNUM:~1!"
-
-    if exist "%ORIGEN%\\%PREFIJO%-!RAW!.jpg" (
-      copy "%ORIGEN%\\%PREFIJO%-!RAW!.jpg" "%DESTINO%\\%PREFIJO%-!RAW!.jpg" >nul
-      echo   [OK] %PREFIJO%-!RAW!.jpg
-      set /a COUNT+=1
-      set "FOUND=1"
-    )
-
-    rem Algunas carpetas nombran las fotos con el numero entre parentesis
-    rem en vez de con guion adelante. Se prueban ambos formatos, con y sin
-    rem ceros a la izquierda, antes de darla por no encontrada. Los
-    rem parentesis se arman con variables (LP y RP) en vez de escribirlos
-    rem literal aca adentro, porque un parentesis suelto dentro de un
-    rem bloque if rompe la sintaxis del .bat en Windows.
-    if "!FOUND!"=="0" (
-      if exist "%ORIGEN%\\%PREFIJO% !LP!!RAW!!RP!.jpg" (
-        copy "%ORIGEN%\\%PREFIJO% !LP!!RAW!!RP!.jpg" "%DESTINO%\\%PREFIJO% !LP!!RAW!!RP!.jpg" >nul
-        echo   [OK] %PREFIJO% !LP!!RAW!!RP!.jpg
-        set /a COUNT+=1
-        set "FOUND=1"
-      )
-    )
-
-    if "!FOUND!"=="0" (
-      if exist "%ORIGEN%\\%PREFIJO%-!INTNUM!.jpg" (
-        copy "%ORIGEN%\\%PREFIJO%-!INTNUM!.jpg" "%DESTINO%\\%PREFIJO%-!INTNUM!.jpg" >nul
-        echo   [OK] %PREFIJO%-!INTNUM!.jpg
-        set /a COUNT+=1
-        set "FOUND=1"
-      )
-    )
-
-    if "!FOUND!"=="0" (
-      if exist "%ORIGEN%\\%PREFIJO% !LP!!INTNUM!!RP!.jpg" (
-        copy "%ORIGEN%\\%PREFIJO% !LP!!INTNUM!!RP!.jpg" "%DESTINO%\\%PREFIJO% !LP!!INTNUM!!RP!.jpg" >nul
-        echo   [OK] %PREFIJO% !LP!!INTNUM!!RP!.jpg
-        set /a COUNT+=1
-        set "FOUND=1"
-      )
-    )
-
-    rem Si no aparecio con el prefijo exacto, se busca solo por numero,
-    rem con cualquier prefijo adelante. Pasa cuando el nombre real del
-    rem archivo tiene tildes o enies -por ej. LUCIA con tilde en la I-,
-    rem que la app saca del prefijo y que el .bat no puede escribir bien.
-    if "!FOUND!"=="0" (
-      for %%F in ("%ORIGEN%\\*-!RAW!.jpg" "%ORIGEN%\\* !LP!!RAW!!RP!.jpg") do (
-        copy "%%~fF" "%DESTINO%\\%%~nxF" >nul
-        echo   [OK] %%~nxF
-        set /a COUNT+=1
-        set "FOUND=1"
-      )
-    )
-
-    if "!FOUND!"=="0" (
-      for %%F in ("%ORIGEN%\\*-!INTNUM!.jpg" "%ORIGEN%\\* !LP!!INTNUM!!RP!.jpg") do (
-        copy "%%~fF" "%DESTINO%\\%%~nxF" >nul
-        echo   [OK] %%~nxF
-        set /a COUNT+=1
-        set "FOUND=1"
-      )
-    )
-
-    if "!FOUND!"=="0" (
-      echo   [X] NO ENCONTRADA: foto numero !RAW!
-      set /a MISSING+=1
-    )
-  )
-)
-
-if exist "!TMPFILE!" del "!TMPFILE!"
-
-echo.
-echo ================================================
-echo  Fotos copiadas:  !COUNT!
-echo  No encontradas:  !MISSING!
-echo  Carpeta destino: %DESTINO%
-echo ================================================
-echo.
-pause
-endlocal`;
+  // La búsqueda la hace PowerShell (viene con Windows): por cada foto de la
+  // carpeta toma el ÚLTIMO número del nombre y lo compara con los elegidos.
+  // Así sirve para cualquier formato de nombre (WANDA-9, WANDA-009,
+  // WANDA (9), WANDA_9, IMG_0009, LUCÍA-22, .jpg/.jpeg/.png) sin tener que
+  // agregar un caso nuevo cada vez. Si hay dos fotos con el mismo número, se
+  // prefiere la que empieza con el prefijo. El script de PowerShell no lleva
+  // comillas dobles, % ni ! para que cmd no lo rompa.
+  const ps = [
+    "$p=$env:PREFIJO",
+    "$o=$env:ORIGEN.Trim().Trim([char]34).Trim()",
+    "$d=Join-Path ([Environment]::GetFolderPath('Desktop')) ('SELECCION_'+$p)",
+    "Write-Host ('Origen:  '+$o)",
+    "Write-Host ('Destino: '+$d)",
+    "Write-Host ''",
+    "if(-not (Test-Path -LiteralPath $o -PathType Container)){ Write-Host ('  [X] No existe la carpeta: '+$o); Write-Host '      Revisa la ruta: tiene que ser la carpeta donde estan las fotos.'; exit }",
+    "$fotos=@(Get-ChildItem -LiteralPath $o -File | Where-Object { $_.Extension -in '.jpg','.jpeg','.png' })",
+    "if($fotos.Count -eq 0){ Write-Host '  [X] No hay fotos JPG o PNG en esa carpeta. Esto es lo que tiene:'; Get-ChildItem -LiteralPath $o | Select-Object -First 8 | ForEach-Object { Write-Host ('      '+$_.Name) }; exit }",
+    "New-Item -ItemType Directory -Force -Path $d | Out-Null",
+    "$idx=@{}",
+    "foreach($f in $fotos){ if($f.BaseName -match '([0-9]+)[^0-9]*$'){ $k=[decimal]$matches[1]; if(-not $idx.ContainsKey($k)){ $idx[$k]=@() }; $idx[$k]+=$f } }",
+    "$ok=0",
+    "$miss=0",
+    "foreach($t in ($env:NUMEROS -split ' ')){ if($t -eq ''){ continue }; $n=[decimal]$t; if($idx.ContainsKey($n)){ $f=@($idx[$n] | Sort-Object { -not $_.BaseName.ToUpper().StartsWith($p) }, Name)[0]; Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $d $f.Name) -Force; Write-Host ('  [OK] '+$f.Name); $ok++ } else { Write-Host ('  [X] NO ENCONTRADA: foto numero '+$t); $miss++ } }",
+    "Write-Host ''",
+    "Write-Host '================================================'",
+    "Write-Host ('  Fotos copiadas:  '+$ok)",
+    "Write-Host ('  No encontradas:  '+$miss)",
+    "Write-Host ('  Carpeta destino: '+$d)",
+    "Write-Host '================================================'",
+    "if($miss -gt 0){ Write-Host ''; Write-Host '  Asi se llaman algunas fotos de la carpeta:'; $fotos | Select-Object -First 5 | ForEach-Object { Write-Host ('      '+$_.Name) } }"
+  ].join("; ");
+  const bat = [
+    "@echo off",
+    "setlocal",
+    "echo ================================================",
+    `echo     COPIADOR DE SELECCION - ${prefijo}`,
+    "echo ================================================",
+    "echo.",
+    'set "ORIGEN="',
+    'set /p "ORIGEN=Pega la ruta de la carpeta con las fotos: "',
+    "echo.",
+    "if not defined ORIGEN goto sinruta",
+    `set "PREFIJO=${prefijo}"`,
+    `set "NUMEROS=${tokens.join(" ")}"`,
+    `powershell -NoProfile -ExecutionPolicy Bypass -Command "${ps}"`,
+    "goto fin",
+    ":sinruta",
+    "echo   [X] No pegaste ninguna ruta.",
+    ":fin",
+    "echo.",
+    "pause",
+    "endlocal",
+    ""
+  ].join("\r\n");
 
   const blob = new Blob([bat], { type: 'text/plain' });
   const url = URL.createObjectURL(blob);
