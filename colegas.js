@@ -45,6 +45,7 @@ const MODE_KEY = "janos_colegas_mode";
 let colMode = (() => { try { return localStorage.getItem(MODE_KEY) === "assign" ? "assign" : "team"; } catch { return "team"; } })();
 let assignMonth = "", assignSalon = "", assignOnlyFree = false;
 let assignKind = "event"; // "event" | "session" (sesiones de fotos)
+let assignWhen = "upcoming"; // "upcoming" | "past" (trabajos que ya pasaron, para cargarlos y pagarlos)
 // Sesiones de fotos leídas de Google Calendar (ahí se agendan: título
 // "#código Book Nombre · lugar · hora"). null = todavía no se cargaron.
 let gcalSessions = null; // { status: "loading" | "ready" | "not_connected" | "error", events: [] }
@@ -127,6 +128,10 @@ function installmentNumber(d, paymentId) {
   const apps = data.applications.filter((a) => a.discount_id === d.id).sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
   return apps.findIndex((a) => a.payment_id === paymentId) + 1;
 }
+// Lo dado "a cuenta" (pagos parciales) que todavía no se descontó de un pago de eventos.
+function advanceCredit(colleagueId) {
+  return num(data.payments.filter((p) => p.colleague_id === colleagueId).reduce((s, p) => s + (p.kind === "advance" ? Number(p.net) : 0) - Number(p.advance_used || 0), 0));
+}
 function summary(colleague) {
   const mine = data.coverages.filter((cv) => cv.colleague_id === colleague.id);
   const unpaid = mine.filter((cv) => !cv.payment_id);
@@ -135,13 +140,24 @@ function summary(colleague) {
   const discounts = data.discounts.filter((d) => d.colleague_id === colleague.id && discountRemaining(d) > 0);
   const nextCuotas = num(discounts.reduce((s, d) => s + suggestedInstallment(d), 0));
   const upcoming = mine.filter((cv) => coverageDate(cv) >= today()).sort(byDate);
+  const credit = advanceCredit(colleague.id);
+  const afterCuotas = num(Math.max(0, gross - Math.min(gross, nextCuotas)));
   return {
-    mine, unpaid, due, gross,
-    net: num(Math.max(0, gross - Math.min(gross, nextCuotas))),
+    mine, unpaid, due, gross, credit, afterCuotas,
+    net: num(Math.max(0, afterCuotas - credit)),
     future: num(unpaid.filter((cv) => !isDue(cv)).reduce((s, cv) => s + Number(cv.amount), 0)),
     discountLeft: num(discounts.reduce((s, d) => s + discountRemaining(d), 0)),
     next: upcoming[0] || null,
   };
+}
+
+function owedDetail(s) {
+  const parts = [];
+  if (s.due.length) parts.push(`${s.due.length} ${s.due.length === 1 ? "evento" : "eventos"} sin pagar (${money(s.gross)})`);
+  if (s.gross !== s.afterCuotas) parts.push(`− ${money(num(s.gross - s.afterCuotas))} de cuota`);
+  if (s.credit > 0) parts.push(s.net > 0 || s.gross ? `− ${money(Math.min(s.credit, s.afterCuotas))} ya dado a cuenta` : `${money(s.credit)} dado a cuenta`);
+  if (s.credit > s.afterCuotas && s.afterCuotas > 0) parts.push(`le queda a favor ${money(num(s.credit - s.afterCuotas))}`);
+  return parts.length ? parts.join(" · ") : "Está al día";
 }
 
 // ── carga ─────────────────────────────────────────────────────────────────
@@ -251,7 +267,7 @@ function cardHtml(c) {
       <div class="col-card-name"><strong>${esc(c.name)}</strong><span>${esc(teamLabel(teamOf(c)))} · ${esc(c.role || "Sin función")}${c.active ? "" : " · Inactivo"}</span></div>
       <button class="icon-btn col-edit" title="Editar colega" data-col="edit-colleague" data-id="${c.id}">✎</button>
     </header>
-    <div class="col-owed ${s.net > 0 ? "has-debt" : ""}"><span>Le debés</span><strong>${money(s.net)}</strong>${s.gross !== s.net ? `<small>${money(s.gross)} − cuota de descuento</small>` : `<small>${s.due.length ? `${s.due.length} ${s.due.length === 1 ? "evento" : "eventos"} sin pagar` : "Está al día"}</small>`}</div>
+    <div class="col-owed ${s.net > 0 ? "has-debt" : ""}"><span>Le debés</span><strong>${money(s.net)}</strong><small>${owedDetail(s)}</small></div>
     <dl class="col-facts">
       <div><dt>Próxima cobertura</dt><dd>${nextClient ? `${esc(deps.dateText(coverageDate(s.next)))} · ${isSession(s.next) ? "Sesión · " : ""}${esc(nextClient.honoree)}` : "—"}</dd></div>
       <div><dt>A futuro</dt><dd>${money(s.future)}</dd></div>
@@ -368,9 +384,14 @@ function distributorHtml() {
     unmatched = built.unmatched;
     all = built.items.map((it) => ({ ...it, key: it.client.id }));
   } else {
-    all = deps.getClients().filter((c) => c.eventDate && c.eventDate >= today()).map((c) => ({ client: c, date: c.eventDate, time: eventTimeOf(c.id), key: c.id }));
+    const yearAgo = (() => { const x = new Date(`${today()}T12:00:00`); x.setFullYear(x.getFullYear() - 1); return x.toISOString().slice(0, 10); })();
+    all = deps.getClients()
+      .filter((c) => c.eventDate && (assignWhen === "past" ? c.eventDate < today() && c.eventDate >= yearAgo : c.eventDate >= today()))
+      .map((c) => ({ client: c, date: c.eventDate, time: eventTimeOf(c.id), key: c.id }));
   }
   all.sort((a, b) => a.date.localeCompare(b.date) || String(a.time || "").localeCompare(String(b.time || "")) || String(a.client.honoree).localeCompare(String(b.client.honoree)));
+  const past = kind === "event" && assignWhen === "past";
+  if (past) all.reverse();
   const months = [...new Set(all.map((it) => it.date.slice(0, 7)))];
   const salons = [...new Set(all.map((it) => it.client.salon).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   if (assignMonth && !months.includes(assignMonth)) assignMonth = "";
@@ -419,7 +440,7 @@ function distributorHtml() {
         <select data-col-assign="${c.id}" data-col-assign-kind="${kind}" aria-label="Quién cubre ${kind === "session" ? "la sesión de" : ""} ${esc(c.honoree || "el evento")}" ${paid ? "disabled title=\"Ya está pagado: cambialo desde la ficha del evento\"" : ""}>
           <option value="">— Sin asignar —</option>${orphan}<optgroup label="${esc(teamLabel(team))}">${opts}</optgroup>${extOpts}
         </select>
-        ${outdated ? `<button class="col-chip warn" data-col="session-sync" data-id="${cv.id}" title="La sesión cambió en el calendario">⚠ Cambió en el calendario · actualizar</button>` : cvs.length > 1 ? `<small>+${cvs.length - 1} más del equipo (ver ficha)</small>` : paid ? `<small>Pagado</small>` : ""}
+        ${outdated ? `<button class="col-chip warn" data-col="session-sync" data-id="${cv.id}" title="La sesión cambió en el calendario">⚠ Cambió en el calendario · actualizar</button>` : cvs.length > 1 ? `<small>+${cvs.length - 1} más del equipo (ver ficha)</small>` : paid ? `<small class="col-paid">✔ Pagado</small>` : cv && it.date < today() ? `<small class="col-due">Por pagar · ${money(cv.amount)}</small>` : ""}
       </div>
     </div>`;
   };
@@ -432,10 +453,14 @@ function distributorHtml() {
     return head + rowHtml(it);
   }).join("");
 
-  const kindTabs = `<div class="view-switch col-assign-kind" aria-label="Qué repartir">
+  const whenTabs = kind !== "event" ? "" : `<div class="view-switch col-assign-kind" aria-label="Cuándo">
+    <button class="${!past ? "active" : ""}" aria-pressed="${!past}" data-col="assign-when" data-id="upcoming">Próximos</button>
+    <button class="${past ? "active" : ""}" aria-pressed="${past}" data-col="assign-when" data-id="past">Anteriores (último año)</button>
+  </div>`;
+  const kindTabs = `<div class="col-assign-tabs">${`<div class="view-switch col-assign-kind" aria-label="Qué repartir">
     <button class="${kind === "event" ? "active" : ""}" aria-pressed="${kind === "event"}" data-col="assign-kind" data-id="event">🎉 Eventos</button>
     <button class="${kind === "session" ? "active" : ""}" aria-pressed="${kind === "session"}" data-col="assign-kind" data-id="session">📷 Sesiones de fotos</button>
-  </div>`;
+  </div>`}${whenTabs}</div>`;
   const gcalNote = kind !== "session" ? "" : gcalSessions?.status === "loading" ? `<p class="col-help">Leyendo las sesiones de Google Calendar…</p>`
     : gcalSessions?.status === "not_connected" ? `<div class="col-warn">Google Calendar no está conectado: muestro solo las sesiones cargadas en las fichas. Conectalo desde <b>Calendario → Conectar Google Calendar</b>.</div>`
     : gcalSessions?.status === "error" ? `<div class="col-warn">No pude leer Google Calendar (${esc(gcalSessions.error || "error")}): muestro solo las sesiones de las fichas. <button class="ghost-btn col-mini-btn" data-col="gcal-reload">Reintentar</button></div>`
@@ -445,7 +470,7 @@ function distributorHtml() {
   return `<div class="col-assign">
     ${kindTabs}
     <div class="col-assign-top">
-      ${kind === "event" ? `<p class="col-help">Repartiendo los eventos del <b>${esc(teamLabel(team))}</b>. Cargá la hora de <b>Inicio</b> de cada evento: el personal queda citado ${ARRIVAL_BEFORE_MIN} minutos antes. Al elegir a alguien se le asigna con su tarifa; las indicaciones las completás en la ficha del evento.</p>` : `<p class="col-help">Repartiendo las sesiones de fotos del <b>${esc(teamLabel(team))}</b>. Al elegir a alguien se le asigna con la fecha, hora y lugar de la sesión.</p>${gcalNote}`}
+      ${past ? `<p class="col-help">Eventos que <b>ya pasaron</b> (último año). Elegí quién lo cubrió para que quede registrado y figure en <b>«Le debés»</b>; después lo pagás con «Registrar pago». No se le mandan avisos.</p>` : kind === "event" ? `<p class="col-help">Repartiendo los eventos del <b>${esc(teamLabel(team))}</b>. Cargá la hora de <b>Inicio</b> de cada evento: el personal queda citado ${ARRIVAL_BEFORE_MIN} minutos antes. Al elegir a alguien se le asigna con su tarifa; las indicaciones las completás en la ficha del evento.</p>` : `<p class="col-help">Repartiendo las sesiones de fotos del <b>${esc(teamLabel(team))}</b>. Al elegir a alguien se le asigna con la fecha, hora y lugar de la sesión.</p>${gcalNote}`}
       <div class="toolbar col-assign-filters">
         <select data-col-assign-filter="month" aria-label="Mes"><option value="">Todos los meses</option>${months.map((m) => `<option value="${m}" ${assignMonth === m ? "selected" : ""}>${esc(monthName(m))}</option>`).join("")}</select>
         <select data-col-assign-filter="salon" aria-label="Salón"><option value="">Todos los salones</option>${salons.map((x) => `<option value="${esc(x)}" ${assignSalon === x ? "selected" : ""}>${esc(x)}</option>`).join("")}</select>
@@ -973,6 +998,8 @@ let pendingWa = {};
 function daysUntil(iso) { return Math.round((new Date(`${iso}T12:00:00`) - new Date(`${today()}T12:00:00`)) / 86400000); }
 async function notifyChange({ client, cv, added = null, removed = null, changed = null, offerWa = true }) {
   if (!client || !cv || (!added && !removed && !changed)) return;
+  // Trabajos que ya pasaron (cargados para pagarlos): sin avisos al personal.
+  if (coverageDate(cv) < today()) return;
   const what = isSession(cv) ? "la sesión de fotos de" : "el evento de";
   const label = `${client.honoree || "Evento"}${client.type ? ` (${client.type})` : ""} · ${client.salon || ""} · ${dateLong(coverageDate(cv))}`;
   const time = cv.arrival_time ? ` Presentarte ${hhmm(cv.arrival_time)} h.` : "";
@@ -1041,12 +1068,17 @@ function paymentMessage(p) {
   const c = colleagueById(p.colleague_id);
   const covers = data.coverages.filter((cv) => cv.payment_id === p.id).sort(byDate);
   const apps = data.applications.filter((a) => a.payment_id === p.id);
+  if (p.kind === "advance") {
+    const s = c ? summary(c) : null;
+    return [`Hola ${firstName(c?.name)}! Te pagué ${money(p.net)} a cuenta (${deps.dateText(p.paid_on)}).`, p.notes || null, s ? `Te queda por cobrar: ${money(s.net)}` : null].filter(Boolean).join("\n");
+  }
   const lines = [`Hola ${firstName(c?.name)}! Te pagué ${money(p.net)} (${deps.dateText(p.paid_on)}). Detalle:`, ""];
   covers.forEach((cv) => { const cl = clientById(cv.client_id); lines.push(`• ${cl ? `${deps.dateText(coverageDate(cv))} ${isSession(cv) ? "Sesión " : ""}${cl.honoree}` : "Evento"}: ${money(cv.amount)}`); });
   apps.forEach((a) => {
     const d = data.discounts.find((x) => x.id === a.discount_id);
     lines.push(`• Descuento ${d ? `${d.description}${d.installments > 1 ? ` (cuota ${installmentNumber(d, p.id)}/${d.installments})` : ""}` : ""}: −${money(a.amount)}`);
   });
+  if (Number(p.advance_used) > 0) lines.push(`• Ya cobrado a cuenta: −${money(p.advance_used)}`);
   lines.push("", `Total: ${money(p.net)}`);
   if (p.notes) lines.push(p.notes);
   return lines.join("\n");
@@ -1068,8 +1100,9 @@ function openColleagueDetail(id) {
   showDialog("colDetailDialog", `<div class="col-detail">
     ${head(`${c.role || "Colega"}${c.active ? "" : " · Inactivo"}`, c.name, "colDetailDialog")}
     <div class="col-detail-top">
-      <div class="col-owed ${s.net > 0 ? "has-debt" : ""}"><span>Le debés hoy</span><strong>${money(s.net)}</strong><small>${s.gross !== s.net ? `${money(s.gross)} de eventos − ${money(num(s.gross - s.net))} de cuota` : `${s.due.length} ${s.due.length === 1 ? "evento" : "eventos"} realizados sin pagar`}</small></div>
+      <div class="col-owed ${s.net > 0 ? "has-debt" : ""}"><span>Le debés hoy</span><strong>${money(s.net)}</strong><small>${owedDetail(s)}</small></div>
       <div class="col-detail-actions">
+        <button class="secondary-btn" data-col="advance" data-id="${id}">💵 Pago a cuenta</button>
         <button class="primary-btn" data-col="pay" data-id="${id}">Registrar pago</button>
         <button class="secondary-btn" data-col="add-discount" data-id="${id}">+ Descuento</button>
         <button class="secondary-btn" data-col="calendar" data-id="${id}" ${c.active ? "" : "disabled"}>📅 Calendario</button>
@@ -1081,7 +1114,7 @@ function openColleagueDetail(id) {
     <h3 class="col-section">Descuentos <small>${discounts.length}</small></h3>
     ${discounts.length ? `<div class="col-table-wrap"><table class="col-table"><thead><tr><th>Concepto</th><th class="num">Total</th><th>Cuotas</th><th class="num">Descontado</th><th class="num">Resta</th><th></th></tr></thead><tbody>${discounts.map((d) => { const rem = discountRemaining(d); const applied = data.applications.filter((a) => a.discount_id === d.id).length; return `<tr><td>${esc(d.description)}<small class="col-sub">${esc(deps.dateText(d.created_on))}</small></td><td class="num">${money(d.total_amount)}</td><td>${applied}/${d.installments}</td><td class="num">${money(discountApplied(d))}</td><td class="num">${rem > 0 ? money(rem) : `<span class="col-chip ok">Saldado</span>`}</td><td>${applied ? "" : `<button class="icon-btn col-mini" title="Borrar descuento" data-col="del-discount" data-id="${d.id}">×</button>`}</td></tr>`; }).join("")}</tbody></table></div>` : `<p class="col-empty">Sin descuentos. Usalos si, por ejemplo, le vendiste equipo y se lo descontás de sus trabajos.</p>`}
     <h3 class="col-section">Pagos <small>${payments.length}</small></h3>
-    ${payments.length ? `<div class="col-table-wrap"><table class="col-table"><thead><tr><th>Fecha</th><th>Eventos</th><th class="num">Bruto</th><th class="num">Descuentos</th><th class="num">Pagado</th><th></th></tr></thead><tbody>${payments.map((p) => `<tr><td>${esc(deps.dateText(p.paid_on))}${p.notes ? `<small class="col-sub">${esc(p.notes)}</small>` : ""}</td><td>${data.coverages.filter((cv) => cv.payment_id === p.id).length}</td><td class="num">${money(p.gross)}</td><td class="num">${Number(p.discounts) ? `−${money(p.discounts)}` : "—"}</td><td class="num"><strong>${money(p.net)}</strong></td><td class="col-row-actions"><button class="icon-btn col-mini" title="Mandar el detalle por WhatsApp" data-col="wa-payment" data-id="${p.id}">💬</button><button class="ghost-btn col-undo" data-col="undo-payment" data-id="${p.id}">Deshacer</button></td></tr>`).join("")}</tbody></table></div>` : `<p class="col-empty">Todavía no le registraste pagos.</p>`}
+    ${payments.length ? `<div class="col-table-wrap"><table class="col-table"><thead><tr><th>Fecha</th><th>Eventos</th><th class="num">Bruto</th><th class="num">Descuentos</th><th class="num">Pagado</th><th></th></tr></thead><tbody>${payments.map((p) => `<tr><td>${esc(deps.dateText(p.paid_on))}${p.notes ? `<small class="col-sub">${esc(p.notes)}</small>` : ""}</td><td>${p.kind === "advance" ? `<span class="col-chip">💵 A cuenta</span>` : data.coverages.filter((cv) => cv.payment_id === p.id).length}</td><td class="num">${p.kind === "advance" ? "—" : money(p.gross)}</td><td class="num">${[Number(p.discounts) ? `−${money(p.discounts)}` : "", Number(p.advance_used) ? `−${money(p.advance_used)} a cuenta` : ""].filter(Boolean).join("<br>") || "—"}</td><td class="num"><strong>${money(p.net)}</strong></td><td class="col-row-actions"><button class="icon-btn col-mini" title="Mandar el detalle por WhatsApp" data-col="wa-payment" data-id="${p.id}">💬</button><button class="ghost-btn col-undo" data-col="undo-payment" data-id="${p.id}">Deshacer</button></td></tr>`).join("")}</tbody></table></div>` : `<p class="col-empty">Todavía no le registraste pagos.</p>`}
     ${c.notes ? `<p class="col-notes">📝 ${esc(c.notes)}</p>` : ""}
   </div>`);
 }
@@ -1130,18 +1163,22 @@ function openPaymentForm(colleagueId) {
   const c = colleagueById(colleagueId); if (!c) return;
   const unpaid = data.coverages.filter((cv) => cv.colleague_id === colleagueId && !cv.payment_id).sort(byDate);
   const discounts = data.discounts.filter((d) => d.colleague_id === colleagueId && discountRemaining(d) > 0);
-  if (!unpaid.length && !discounts.length) { toast(`${c.name} no tiene nada pendiente para pagar.`); return; }
+  if (!unpaid.length && !discounts.length) { openAdvanceForm(colleagueId); return; }
+  const credit = advanceCredit(colleagueId);
   showDialog("colFormDialog", `<form id="colPaymentForm" data-colleague="${colleagueId}">
     ${head(c.name, "Registrar pago", "colFormDialog")}
+    <div class="col-pay-switch"><span>¿Le das solo una parte o un adelanto?</span><button class="secondary-btn col-mini-btn" type="button" data-col="advance" data-id="${colleagueId}">💵 Registrar pago a cuenta</button></div>
     ${unpaid.length ? `<p class="col-label">Eventos que le pagás <small>(los futuros vienen sin marcar)</small></p>
     <div class="col-pay-list">${unpaid.map((cv) => { const cl = clientById(cv.client_id); return `<label class="col-pay-item"><input type="checkbox" name="coverage" value="${cv.id}" data-amount="${Number(cv.amount)}" ${isDue(cv) ? "checked" : ""}><span>${cl ? `${esc(deps.dateText(coverageDate(cv)))} · ${isSession(cv) ? "Sesión · " : ""}${esc(cl.honoree)}` : "Evento"}${isDue(cv) ? "" : ` <em>· próximo</em>`}</span><strong>${money(cv.amount)}</strong></label>`; }).join("")}</div>` : ""}
     ${discounts.length ? `<p class="col-label">Descuentos de este pago</p>
     <div class="col-pay-list">${discounts.map((d) => `<label class="col-pay-item col-pay-disc"><span>${esc(d.description)} <em>· resta ${money(discountRemaining(d))}${d.installments > 1 ? ` · cuota sugerida ${money(suggestedInstallment(d))}` : ""}</em></span><input type="number" name="discount" data-id="${d.id}" min="0" max="${discountRemaining(d)}" step="1" value="${suggestedInstallment(d)}"></label>`).join("")}</div>` : ""}
+    ${credit > 0 ? `<p class="col-label">Pagos a cuenta que ya le diste</p>
+    <div class="col-pay-list"><label class="col-pay-item col-pay-disc"><span>Descontar de lo dado a cuenta <em>· disponible ${money(credit)}</em></span><input type="number" name="advance" min="0" max="${credit}" step="1" value="0" data-auto="1"></label></div>` : ""}
     <div class="form-grid col-pay-meta">
       <label>Fecha del pago<input name="paid_on" type="date" value="${today()}" required></label>
       <label>Nota (opcional)<input name="notes" maxlength="140" placeholder="Ej. Transferencia"></label>
     </div>
-    <div class="col-pay-total"><div><span>Eventos</span><strong data-col-pay="gross">$ 0</strong></div><div><span>Descuentos</span><strong data-col-pay="disc">$ 0</strong></div><div class="col-pay-net"><span>A pagar</span><strong data-col-pay="net">$ 0</strong></div></div>
+    <div class="col-pay-total"><div><span>Eventos</span><strong data-col-pay="gross">$ 0</strong></div><div><span>Descuentos</span><strong data-col-pay="disc">$ 0</strong></div>${credit > 0 ? `<div><span>A cuenta</span><strong data-col-pay="adv">$ 0</strong></div>` : ""}<div class="col-pay-net"><span>A pagar</span><strong data-col-pay="net">$ 0</strong></div></div>
     <p class="col-help col-error hidden" data-col-pay="error"></p>
     <div class="modal-actions">
       <button class="secondary-btn" type="button" data-col="close" data-id="colFormDialog">Cancelar</button>
@@ -1155,16 +1192,23 @@ function paymentValues(form) {
   const gross = num([...form.querySelectorAll("input[name=coverage]:checked")].reduce((s, i) => s + Number(i.dataset.amount), 0));
   const discounts = [...form.querySelectorAll("input[name=discount]")].map((i) => ({ id: i.dataset.id, amount: num(i.value), max: Number(i.max) })).filter((d) => d.amount > 0);
   const disc = num(discounts.reduce((s, d) => s + d.amount, 0));
+  const advInput = form.querySelector("input[name=advance]");
+  // Lo dado a cuenta se descuenta solo (hasta cubrir lo que se paga), salvo que lo cambies a mano.
+  const advMax = advInput ? Number(advInput.getAttribute("max")) || 0 : 0;
+  if (advInput && advInput.getAttribute("data-auto") === "1") advInput.value = String(num(Math.max(0, Math.min(advMax, gross - disc))));
+  const advance = advInput ? num(advInput.value) : 0;
   let error = "";
   if (discounts.some((d) => d.amount > d.max)) error = "Un descuento supera lo que queda por descontar.";
-  else if (disc > gross) error = "Los descuentos no pueden superar lo que le pagás en este pago.";
+  else if (advInput && advance > advMax) error = "Lo que descontás supera lo que le diste a cuenta.";
+  else if (disc + advance > gross) error = "Los descuentos y lo dado a cuenta no pueden superar lo que le pagás en este pago.";
   else if (!coverageIds.length && !disc) error = "Marcá al menos un evento.";
-  return { coverageIds, gross, disc, net: num(gross - disc), discounts: discounts.map(({ id, amount }) => ({ id, amount })), error };
+  return { coverageIds, gross, disc, advance, net: num(gross - disc - advance), discounts: discounts.map(({ id, amount }) => ({ id, amount })), error };
 }
 function updatePaymentTotals(form) {
   const v = paymentValues(form);
   form.querySelector("[data-col-pay=gross]").textContent = money(v.gross);
   form.querySelector("[data-col-pay=disc]").textContent = v.disc ? `−${money(v.disc)}` : money(0);
+  const adv = form.querySelector("[data-col-pay=adv]"); if (adv) adv.textContent = v.advance ? `−${money(v.advance)}` : money(0);
   form.querySelector("[data-col-pay=net]").textContent = money(Math.max(0, v.net));
   const err = form.querySelector("[data-col-pay=error]");
   err.textContent = v.error; err.classList.toggle("hidden", !v.error || v.error.startsWith("Marcá"));
@@ -1176,7 +1220,7 @@ async function savePaymentForm(form) {
   await withBusy(form, async () => {
     const paymentId = await run(supabase.rpc("register_colleague_payment", {
       p_colleague_id: colleagueId, p_coverage_ids: v.coverageIds, p_discounts: v.discounts,
-      p_paid_on: form.elements.paid_on.value || today(), p_notes: form.elements.notes.value || null,
+      p_paid_on: form.elements.paid_on.value || today(), p_notes: form.elements.notes.value || null, p_advance: v.advance || 0,
     }));
     closeDialog("colFormDialog");
     await loadColleagues();
@@ -1185,8 +1229,46 @@ async function savePaymentForm(form) {
     if (p && colleagueById(colleagueId)?.phone && confirm("Pago registrado. ¿Le mandás el detalle por WhatsApp?")) sendWhatsapp(colleagueById(colleagueId), paymentMessage(p));
   });
 }
+// Pago a cuenta (parcial / adelanto): no paga eventos puntuales; se resta de
+// lo que se le debe y se descuenta cuando se le pagan los eventos.
+function openAdvanceForm(colleagueId) {
+  const c = colleagueById(colleagueId); if (!c) return;
+  const s = summary(c);
+  showDialog("colFormDialog", `<form id="colAdvanceForm" data-colleague="${colleagueId}">
+    ${head(c.name, "Pago a cuenta (parcial)", "colFormDialog")}
+    <p class="col-help">Anotá lo que le das ahora aunque no cubra eventos completos. Se resta de lo que le debés y, cuando le pagues los eventos, se descuenta solo.</p>
+    <div class="col-pay-total"><div><span>Le debés hoy</span><strong>${money(s.net)}</strong></div><div><span>Ya dado a cuenta</span><strong>${money(s.credit)}</strong></div><div><span>Eventos futuros</span><strong>${money(s.future)}</strong></div></div>
+    <div class="form-grid">
+      <label>Monto que le das<input name="amount" type="number" min="1" step="1" inputmode="numeric" required placeholder="Ej. 50000"></label>
+      <label>Fecha<input name="paid_on" type="date" value="${today()}" required></label>
+    </div>
+    <label class="full-label">Nota (opcional)<input name="notes" maxlength="140" placeholder="Ej. Transferencia, a cuenta de la boda del sábado"></label>
+    <div class="modal-actions">
+      <button class="secondary-btn" type="button" data-col="close" data-id="colFormDialog">Cancelar</button>
+      <button class="primary-btn" type="submit">Registrar pago a cuenta</button>
+    </div>
+  </form>`);
+}
+async function saveAdvanceForm(form) {
+  const colleagueId = form.dataset.colleague;
+  const amount = num(form.elements.amount.value);
+  if (!(amount > 0)) { toast("Poné el monto que le das."); return; }
+  await withBusy(form, async () => {
+    const [p] = await run(supabase.from("colleague_payments").insert({
+      colleague_id: colleagueId, kind: "advance", gross: 0, discounts: 0, net: amount,
+      paid_on: form.elements.paid_on.value || today(), notes: String(form.elements.notes.value || "").trim() || null,
+    }).select());
+    closeDialog("colFormDialog");
+    await loadColleagues();
+    toast(`Pago a cuenta registrado: ${money(amount)}`);
+    const c = colleagueById(colleagueId);
+    if (p && c?.phone && confirm("Pago a cuenta registrado. ¿Le mandás el detalle por WhatsApp?")) sendWhatsapp(c, paymentMessage(data.payments.find((x) => x.id === p.id) || p));
+  });
+}
+
 async function undoPayment(id) {
   const p = data.payments.find((x) => x.id === id); if (!p) return;
+  if (p.kind === "advance" && advanceCredit(p.colleague_id) < Number(p.net)) { toast("Ese pago a cuenta ya se descontó en un pago de eventos posterior: deshacé primero ese pago.", 7000); return; }
   if (!confirm(`¿Deshacer el pago del ${deps.dateText(p.paid_on)} por ${money(p.net)}?\n\nLos eventos vuelven a quedar pendientes y las cuotas de descuento de ese pago se anulan.`)) return;
   await run(supabase.from("colleague_payments").delete().eq("id", id));
   toast("Pago deshecho");
@@ -1282,6 +1364,7 @@ const ACTIONS = {
   "del-colleague": (id) => deleteColleague(id),
   "open-colleague": (id) => openColleagueDetail(id),
   pay: (id) => openPaymentForm(id),
+  advance: (id) => openAdvanceForm(id),
   "add-discount": (id) => openDiscountForm(id),
   "del-discount": (id) => deleteDiscount(id),
   "undo-payment": (id) => undoPayment(id),
@@ -1295,6 +1378,7 @@ const ACTIONS = {
   "del-coverage": (id) => deleteCoverage(id),
   "wa-coverage": (id) => { const cv = data.coverages.find((x) => x.id === id); if (cv) sendWhatsapp(colleagueById(cv.colleague_id), coverageMessage(cv)); },
   "share-drive": (id) => shareDrive(id),
+  "assign-when": (w) => { assignWhen = w === "past" ? "past" : "upcoming"; assignMonth = ""; renderColleagues(); },
   "assign-kind": (k) => { assignKind = k === "session" ? "session" : "event"; renderColleagues(); },
   "gcal-reload": () => loadGcalSessions(),
   "session-sync": (id) => syncSessionCoverage(id),
@@ -1340,6 +1424,7 @@ export function initColleagues(dependencies) {
   });
   document.addEventListener("input", (e) => {
     const form = e.target.form;
+    if (form?.id === "colPaymentForm" && e.target.name === "advance") e.target.setAttribute("data-auto", "0");
     if (form?.id === "colPaymentForm") updatePaymentTotals(form);
     if (form?.id === "colDiscountForm") updateDiscountHelp(form);
     if (form?.id === "colCoverageForm" && e.target.name === "amount") e.target.dataset.auto = "0";
@@ -1350,7 +1435,7 @@ export function initColleagues(dependencies) {
     }
   });
   document.addEventListener("submit", (e) => {
-    const handlers = { colExternalForm: saveExternalForm, colColleagueForm: saveColleagueForm, colCoverageForm: saveCoverageForm, colDiscountForm: saveDiscountForm, colPaymentForm: savePaymentForm };
+    const handlers = { colAdvanceForm: saveAdvanceForm, colExternalForm: saveExternalForm, colColleagueForm: saveColleagueForm, colCoverageForm: saveCoverageForm, colDiscountForm: saveDiscountForm, colPaymentForm: savePaymentForm };
     const handler = handlers[e.target.id];
     if (!handler) return;
     e.preventDefault();

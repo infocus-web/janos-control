@@ -838,3 +838,7 @@ button.col-chip:hover { filter: brightness(1.15); }
 .col-panel-btn.active i { background: linear-gradient(135deg, var(--gold), #a87830); color: #1a1000; }
 .col-panel-btn:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 @media (max-width: 900px) { .col-header-pick { margin-left: 0; } .col-header-pick > span { display: none; } }
+.col-assign-tabs { display: flex; flex-wrap: wrap; gap: 10px; }
+.col-assign-pick small.col-due { color: var(--amber); font-weight: 700; }
+.col-assign-pick small.col-paid { color: var(--green); font-weight: 700; }
+.col-pay-switch { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin: 10px 0 4px; padding: 8px 12px; border: 1px dashed var(--line-2); border-radius: var(--radius); font-size: 13px; color: var(--muted); }
