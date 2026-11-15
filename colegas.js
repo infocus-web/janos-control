@@ -11,7 +11,7 @@
 // openClientDetail(), setView(), loadColleagues() al arrancar,
 // resetColleagues() al cerrar sesión e initColleagues() antes de bootstrap().
 // ─────────────────────────────────────────────────────────────────────────
-import { cloudEnabled, supabase } from "./cloud.js";
+import { cloudEnabled, supabase, supabaseUrl } from "./cloud.js";
 
 const PRODUCTION_ORIGIN = "https://janos-control.vercel.app";
 
@@ -36,6 +36,11 @@ function inTeam(c) { return !teamFilter || teamOf(c) === teamFilter; }
 const MODE_KEY = "janos_colegas_mode";
 let colMode = (() => { try { return localStorage.getItem(MODE_KEY) === "assign" ? "assign" : "team"; } catch { return "team"; } })();
 let assignMonth = "", assignSalon = "", assignOnlyFree = false;
+let assignKind = "event"; // "event" | "session" (sesiones de fotos)
+// Sesiones de fotos leídas de Google Calendar (ahí se agendan: título
+// "#código Book Nombre · lugar · hora"). null = todavía no se cargaron.
+let gcalSessions = null; // { status: "loading" | "ready" | "not_connected" | "error", events: [] }
+let sessionInfo = new Map(); // clientId → { date, time, location, source }
 let openColleagueId = null;
 // Hora de inicio de cada evento (clients.event_time). La app principal no la
 // usa ni la pisa al guardar (no está entre las columnas que sincroniza).
@@ -267,71 +272,153 @@ async function onEventTimeInput(input) {
 // Cada equipo reparte lo suyo: el selector muestra solo su personal y la
 // cobertura del evento de ese equipo (si ya hay una, la cambia o la quita).
 function assignTeam() { return teamFilter && teamFilter !== EXTERNAL_TEAM ? teamFilter : "Pablo"; }
-function teamCoverages(clientId, team) {
+function teamCoverages(clientId, team, kind = "event") {
   return data.coverages.filter((cv) => {
-    if (cv.client_id !== clientId || (cv.kind || "event") !== "event") return false;
+    if (cv.client_id !== clientId || (cv.kind || "event") !== kind) return false;
     const c = colleagueById(cv.colleague_id);
     return isExternal(c) ? (cv.team || "Pablo") === team : teamOf(c) === team;
   });
 }
+async function loadGcalSessions() {
+  if (gcalSessions?.status !== "loading") { gcalSessions = { status: "loading", events: [] }; renderColleagues(); }
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new Error("Volvé a iniciar sesión.");
+    const months = [];
+    const d = new Date(); d.setDate(1);
+    for (let i = 0; i < 7; i++) { months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`); d.setMonth(d.getMonth() + 1); }
+    const results = await Promise.all(months.map(async (m) => {
+      const res = await fetch(`${supabaseUrl}/functions/v1/google-calendar-events?month=${m}`, { headers: { Authorization: `Bearer ${session.access_token}` } });
+      return res.json().catch(() => ({}));
+    }));
+    if (results.some((r) => r.error === "not_connected")) { gcalSessions = { status: "not_connected", events: [] }; }
+    else {
+      const err = results.find((r) => r.error);
+      gcalSessions = { status: err && !results.some((r) => r.events) ? "error" : "ready", error: err?.error || "", events: results.flatMap((r) => r.events || []) };
+    }
+  } catch (err) {
+    console.error(err);
+    gcalSessions = { status: "error", error: String(err.message || err), events: [] };
+  }
+  renderColleagues();
+}
+// "#123 Book Sofía · Maschwitz · 12:00" → código 123 (también lo busca en la descripción).
+function isGcalSession(e) { return /\bbook\b|sesi[oó]n/i.test(e.title || ""); }
+function gcalSessionCode(e) {
+  const m = `${e.title || ""}\n${e.description || ""}`.match(/#\s*([A-Za-z0-9-]+)/);
+  return m ? m[1] : "";
+}
+function buildSessionItems() {
+  const today0 = today();
+  const byCode = new Map(deps.getClients().map((c) => [String(c.code), c]));
+  const items = new Map();
+  const unmatched = [];
+  for (const e of gcalSessions?.events || []) {
+    if (!e.date || e.date < today0) continue;
+    if (!isGcalSession(e)) continue;
+    const client = byCode.get(gcalSessionCode(e));
+    if (!client) { unmatched.push(e); continue; }
+    if (!items.has(client.id)) items.set(client.id, { client, date: e.date, time: e.time || "", location: e.location || photoSessionOf(client)?.location || "", source: "gcal" });
+  }
+  for (const client of deps.getClients()) {
+    const ps = photoSessionOf(client);
+    if (!ps || ps.date < today0 || items.has(client.id)) continue;
+    items.set(client.id, { client, date: ps.date, time: ps.time || "", location: ps.location || "", source: "ficha" });
+  }
+  sessionInfo = new Map([...items].map(([id, it]) => [id, it]));
+  return { items: [...items.values()], unmatched };
+}
+
 function distributorHtml() {
   const team = assignTeam();
+  const kind = assignKind;
   const people = data.colleagues.filter((c) => c.active && teamOf(c) === team).sort((a, b) => a.name.localeCompare(b.name));
-  const upcoming = deps.getClients().filter((c) => c.eventDate && c.eventDate >= today()).sort((a, b) => a.eventDate.localeCompare(b.eventDate) || String(a.honoree).localeCompare(String(b.honoree)));
-  const months = [...new Set(upcoming.map((c) => c.eventDate.slice(0, 7)))];
-  const salons = [...new Set(upcoming.map((c) => c.salon).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  if (kind === "session" && gcalSessions === null) { gcalSessions = { status: "loading", events: [] }; setTimeout(loadGcalSessions); }
+  let all = [];
+  let unmatched = [];
+  if (kind === "session") {
+    const built = buildSessionItems();
+    unmatched = built.unmatched;
+    all = built.items.map((it) => ({ ...it, key: it.client.id }));
+  } else {
+    all = deps.getClients().filter((c) => c.eventDate && c.eventDate >= today()).map((c) => ({ client: c, date: c.eventDate, time: eventTimeOf(c.id), key: c.id }));
+  }
+  all.sort((a, b) => a.date.localeCompare(b.date) || String(a.time || "").localeCompare(String(b.time || "")) || String(a.client.honoree).localeCompare(String(b.client.honoree)));
+  const months = [...new Set(all.map((it) => it.date.slice(0, 7)))];
+  const salons = [...new Set(all.map((it) => it.client.salon).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   if (assignMonth && !months.includes(assignMonth)) assignMonth = "";
   if (assignSalon && !salons.includes(assignSalon)) assignSalon = "";
-  const rows = upcoming
-    .filter((c) => !assignMonth || c.eventDate.startsWith(assignMonth))
-    .filter((c) => !assignSalon || c.salon === assignSalon)
-    .filter((c) => !assignOnlyFree || !teamCoverages(c.id, team).length);
+  const rows = all
+    .filter((it) => !assignMonth || it.date.startsWith(assignMonth))
+    .filter((it) => !assignSalon || it.client.salon === assignSalon)
+    .filter((it) => !assignOnlyFree || !teamCoverages(it.client.id, team, kind).length);
   // Quién ya trabaja cada día (para avisar si se superpone).
   const busy = new Map();
-  data.coverages.forEach((cv) => { const d = coverageDate(cv); if (!busy.has(d)) busy.set(d, new Map()); busy.get(d).set(cv.colleague_id, cv.client_id); });
+  data.coverages.forEach((cv) => { const d = coverageDate(cv); if (!busy.has(d)) busy.set(d, new Map()); busy.get(d).set(cv.colleague_id, `${cv.client_id}:${cv.kind || "event"}`); });
   const counts = new Map(people.map((p) => [p.id, 0]));
   let free = 0;
-  rows.forEach((c) => { const cvs = teamCoverages(c.id, team); if (!cvs.length) free++; cvs.forEach((cv) => counts.set(cv.colleague_id, (counts.get(cv.colleague_id) || 0) + 1)); });
+  rows.forEach((it) => { const cvs = teamCoverages(it.client.id, team, kind); if (!cvs.length) free++; cvs.forEach((cv) => counts.set(cv.colleague_id, (counts.get(cv.colleague_id) || 0) + 1)); });
   const monthName = (m) => { const t = new Intl.DateTimeFormat("es-AR", { month: "long", year: "numeric" }).format(new Date(`${m}-15T12:00:00`)); return t.charAt(0).toUpperCase() + t.slice(1); };
   const packName = (p) => ({ silver: "Silver", gold: "Golden", vip: "VIP", informal: "Informal" })[p] || p || "";
+  const word = kind === "session" ? "sesión" : "evento";
 
-  const rowHtml = (c) => {
-    const cvs = teamCoverages(c.id, team);
+  const rowHtml = (it) => {
+    const c = it.client;
+    const cvs = teamCoverages(c.id, team, kind);
     const cv = cvs[0] || null;
     const paid = Boolean(cv?.payment_id);
-    const dayBusy = busy.get(c.eventDate) || new Map();
+    const dayBusy = busy.get(it.date) || new Map();
     const opts = people.map((p) => {
       const other = dayBusy.get(p.id);
-      const clash = other && other !== c.id;
-      return `<option value="${p.id}" ${cv?.colleague_id === p.id ? "selected" : ""}>${esc(p.name)}${clash ? " · ⚠ ya tiene otro evento ese día" : ""}</option>`;
+      const clash = other && other !== `${c.id}:${kind}`;
+      return `<option value="${p.id}" ${cv?.colleague_id === p.id ? "selected" : ""}>${esc(p.name)}${clash ? " · ⚠ ya tiene otro trabajo ese día" : ""}</option>`;
     }).join("");
     const externals = data.colleagues.filter((x) => isExternal(x) && (x.active || x.id === cv?.colleague_id)).sort((a, b) => a.name.localeCompare(b.name));
     const orphan = cv && !people.some((p) => p.id === cv.colleague_id) && !externals.some((x) => x.id === cv.colleague_id) ? `<option value="${cv.colleague_id}" selected>${esc(colleagueById(cv.colleague_id)?.name || "Colega")} (inactivo)</option>` : "";
     const extOpts = `<optgroup label="Externos">${externals.map((x) => `<option value="${x.id}" ${cv?.colleague_id === x.id ? "selected" : ""}>${esc(x.name)} (externo)</option>`).join("")}<option value="__ext">＋ Persona externa…</option></optgroup>`;
+    // Sesión movida en el calendario después de asignarla.
+    const outdated = kind === "session" && cv && (cv.work_date !== it.date || (it.time && hhmm(cv.arrival_time) !== it.time) || (it.location && (cv.location || "") !== it.location));
+    const sub = kind === "session"
+      ? [it.time ? `${it.time} h` : "sin hora", it.location, c.salon, c.code ? `#${c.code}` : "", `evento ${deps.dateText(c.eventDate)}`]
+      : [c.type, c.salon, c.code ? `#${c.code}` : "", packName(c.pack)];
+    const middle = kind === "session"
+      ? `<div class="col-assign-time col-assign-src">${it.source === "gcal" ? `<span class="col-chip ok" title="Leída de Google Calendar">📅 Calendario</span>` : `<span class="col-chip" title="Cargada en la ficha del cliente, no la encontré en Google Calendar">Ficha</span>`}</div>`
+      : `<label class="col-assign-time"><span>Inicio</span><input type="time" data-col-event-time="${c.id}" value="${esc(eventTimeOf(c.id))}" aria-label="Hora de inicio de ${esc(c.honoree || "el evento")}"></label>`;
     return `<div class="col-assign-row ${cv ? "" : "free"}">
-      <div class="col-assign-date"><strong>${esc(c.eventDate.slice(8, 10))}/${esc(c.eventDate.slice(5, 7))}</strong><span>${esc(new Intl.DateTimeFormat("es-AR", { weekday: "short" }).format(new Date(`${c.eventDate}T12:00:00`)))}</span></div>
-      <div class="col-assign-ev"><button class="col-link" data-col="open-event" data-id="${c.id}">${esc(c.honoree || "Evento")}</button><small>${esc([c.type, c.salon, c.code ? `#${c.code}` : "", packName(c.pack)].filter(Boolean).join(" · "))}</small></div>
-      <label class="col-assign-time"><span>Inicio</span><input type="time" data-col-event-time="${c.id}" value="${esc(eventTimeOf(c.id))}" aria-label="Hora de inicio de ${esc(c.honoree || "el evento")}"></label>
+      <div class="col-assign-date"><strong>${esc(it.date.slice(8, 10))}/${esc(it.date.slice(5, 7))}</strong><span>${esc(new Intl.DateTimeFormat("es-AR", { weekday: "short" }).format(new Date(`${it.date}T12:00:00`)))}</span></div>
+      <div class="col-assign-ev"><button class="col-link" data-col="open-event" data-id="${c.id}">${kind === "session" ? "📷 Book · " : ""}${esc(c.honoree || "Evento")}</button><small>${esc(sub.filter(Boolean).join(" · "))}</small></div>
+      ${middle}
       <div class="col-assign-pick">
-        <select data-col-assign="${c.id}" aria-label="Quién cubre ${esc(c.honoree || "el evento")}" ${paid ? "disabled title=\"Ya está pagado: cambialo desde la ficha del evento\"" : ""}>
+        <select data-col-assign="${c.id}" data-col-assign-kind="${kind}" aria-label="Quién cubre ${kind === "session" ? "la sesión de" : ""} ${esc(c.honoree || "el evento")}" ${paid ? "disabled title=\"Ya está pagado: cambialo desde la ficha del evento\"" : ""}>
           <option value="">— Sin asignar —</option>${orphan}<optgroup label="${esc(teamLabel(team))}">${opts}</optgroup>${extOpts}
         </select>
-        ${cvs.length > 1 ? `<small>+${cvs.length - 1} más del equipo (ver ficha)</small>` : paid ? `<small>Pagado</small>` : ""}
+        ${outdated ? `<button class="col-chip warn" data-col="session-sync" data-id="${cv.id}" title="La sesión cambió en el calendario">⚠ Cambió en el calendario · actualizar</button>` : cvs.length > 1 ? `<small>+${cvs.length - 1} más del equipo (ver ficha)</small>` : paid ? `<small>Pagado</small>` : ""}
       </div>
     </div>`;
   };
 
   let lastMonth = "";
-  const list = rows.map((c) => {
-    const m = c.eventDate.slice(0, 7);
+  const list = rows.map((it) => {
+    const m = it.date.slice(0, 7);
     const head = m !== lastMonth ? `<h3 class="col-assign-month">${esc(monthName(m))}</h3>` : "";
     lastMonth = m;
-    return head + rowHtml(c);
+    return head + rowHtml(it);
   }).join("");
 
+  const kindTabs = `<div class="view-switch col-assign-kind" aria-label="Qué repartir">
+    <button class="${kind === "event" ? "active" : ""}" aria-pressed="${kind === "event"}" data-col="assign-kind" data-id="event">🎉 Eventos</button>
+    <button class="${kind === "session" ? "active" : ""}" aria-pressed="${kind === "session"}" data-col="assign-kind" data-id="session">📷 Sesiones de fotos</button>
+  </div>`;
+  const gcalNote = kind !== "session" ? "" : gcalSessions?.status === "loading" ? `<p class="col-help">Leyendo las sesiones de Google Calendar…</p>`
+    : gcalSessions?.status === "not_connected" ? `<div class="col-warn">Google Calendar no está conectado: muestro solo las sesiones cargadas en las fichas. Conectalo desde <b>Calendario → Conectar Google Calendar</b>.</div>`
+    : gcalSessions?.status === "error" ? `<div class="col-warn">No pude leer Google Calendar (${esc(gcalSessions.error || "error")}): muestro solo las sesiones de las fichas. <button class="ghost-btn col-mini-btn" data-col="gcal-reload">Reintentar</button></div>`
+    : `<p class="col-help">Sesiones leídas de Google Calendar (próximos 7 meses) por el <b>#código</b> del título, más las cargadas en la ficha. <button class="ghost-btn col-mini-btn" data-col="gcal-reload">↻ Actualizar desde el calendario</button></p>`;
+  const unmatchedHtml = kind === "session" && unmatched.length ? `<details class="col-unmatched"><summary>${unmatched.length} ${unmatched.length === 1 ? "sesión del calendario no coincide" : "sesiones del calendario no coinciden"} con ningún cliente</summary><ul>${unmatched.map((e) => `<li>${esc(deps.dateText(e.date))}${e.time ? ` ${esc(e.time)} h` : ""} · ${esc(e.title)}</li>`).join("")}</ul><p class="col-help">El título tiene que llevar el código del cliente, por ejemplo «#123 Book Sofía».</p></details>` : "";
+
   return `<div class="col-assign">
+    ${kindTabs}
     <div class="col-assign-top">
-      <p class="col-help">Repartiendo los eventos del <b>Equipo ${esc(team)}</b>${teamFilter ? "" : " (elegí otro equipo arriba para repartir su personal)"}. Cargá la hora de <b>Inicio</b> de cada evento: el personal queda citado ${ARRIVAL_BEFORE_MIN} minutos antes. Al elegir a alguien se le asigna con su tarifa; las indicaciones las completás en la ficha del evento.</p>
+      ${kind === "event" ? `<p class="col-help">Repartiendo los eventos del <b>${esc(teamLabel(team))}</b>${teamFilter && teamFilter !== EXTERNAL_TEAM ? "" : " (elegí otro equipo arriba para repartir su personal)"}. Cargá la hora de <b>Inicio</b> de cada evento: el personal queda citado ${ARRIVAL_BEFORE_MIN} minutos antes. Al elegir a alguien se le asigna con su tarifa; las indicaciones las completás en la ficha del evento.</p>` : `<p class="col-help">Repartiendo las sesiones de fotos del <b>${esc(teamLabel(team))}</b>. Al elegir a alguien se le asigna con la fecha, hora y lugar de la sesión.</p>${gcalNote}`}
       <div class="toolbar col-assign-filters">
         <select data-col-assign-filter="month" aria-label="Mes"><option value="">Todos los meses</option>${months.map((m) => `<option value="${m}" ${assignMonth === m ? "selected" : ""}>${esc(monthName(m))}</option>`).join("")}</select>
         <select data-col-assign-filter="salon" aria-label="Salón"><option value="">Todos los salones</option>${salons.map((x) => `<option value="${esc(x)}" ${assignSalon === x ? "selected" : ""}>${esc(x)}</option>`).join("")}</select>
@@ -341,24 +428,26 @@ function distributorHtml() {
         <span class="col-chip ${free ? "warn" : "ok"}">Sin asignar: ${free}</span>
         ${people.map((p) => `<span class="col-chip">${esc(p.name.split(/\s+/)[0])}: ${counts.get(p.id) || 0}</span>`).join("")}
       </div>
+      ${unmatchedHtml}
     </div>
-    ${!people.length ? `<div class="panel"><div class="empty"><strong>El Equipo ${esc(team)} no tiene personal activo</strong>Cargalo en «👥 Personal y pagos» con «+ Agregar colega».</div></div>`
+    ${!people.length ? `<div class="panel"><div class="empty"><strong>El ${esc(teamLabel(team))} no tiene personal activo</strong>Cargalo en «👥 Personal y pagos» con «+ Agregar colega».</div></div>`
       : rows.length ? `<div class="col-assign-list">${list}</div>`
-      : `<div class="panel"><div class="empty">${upcoming.length ? "No hay eventos con esos filtros." : "No hay eventos próximos cargados."}</div></div>`}
+      : `<div class="panel"><div class="empty">${all.length ? "No hay nada con esos filtros." : kind === "session" ? (gcalSessions?.status === "loading" ? "Buscando sesiones…" : "No hay sesiones de fotos próximas.") : "No hay eventos próximos cargados."}</div></div>`}
   </div>`;
 }
 
 function assignFromSelector(select) {
   const clientId = select.dataset.colAssign;
-  if (select.value === "__ext") { refreshAll(); openExternalForm(clientId); return; }
+  const kind = select.dataset.colAssignKind === "session" ? "session" : "event";
+  if (select.value === "__ext") { refreshAll(); openExternalForm(clientId, kind); return; }
   select.disabled = true;
-  return applyAssignment(clientId, select.value);
+  return applyAssignment(clientId, select.value, kind);
 }
 
 // Persona ajena: se carga una vez (queda en "Externos") y se le asigna el evento.
-function openExternalForm(clientId) {
+function openExternalForm(clientId, kind = "event") {
   const client = clientById(clientId); if (!client) return;
-  showDialog("colFormDialog", `<form id="colExternalForm" data-client="${clientId}">
+  showDialog("colFormDialog", `<form id="colExternalForm" data-client="${clientId}" data-kind="${kind}">
     ${head(`${deps.dateText(client.eventDate)} · ${client.salon || ""}`, `Persona externa para ${client.honoree || "el evento"}`, "colFormDialog")}
     <p class="col-help">Queda registrado quién cubrió (en el grupo «Externos», aparte de tu equipo) y te abre el WhatsApp con día, hora y lugar para pasarle la info.</p>
     <div class="form-grid">
@@ -385,31 +474,47 @@ async function saveExternalForm(form) {
     }).select());
     data.colleagues = [...data.colleagues, person].sort((a, b) => a.name.localeCompare(b.name));
     closeDialog("colFormDialog");
-    await applyAssignment(form.dataset.client, person.id);
+    await applyAssignment(form.dataset.client, person.id, form.dataset.kind === "session" ? "session" : "event");
   });
 }
 
-async function applyAssignment(clientId, newId) {
+// La sesión se movió en Google Calendar: actualiza fecha/hora/lugar y avisa.
+async function syncSessionCoverage(id) {
+  const cv = data.coverages.find((x) => x.id === id); if (!cv) return;
+  const info = sessionInfo.get(cv.client_id); if (!info) return;
+  const [saved] = await run(supabase.from("colleague_coverages").update({ work_date: info.date, arrival_time: info.time || cv.arrival_time || null, location: info.location || cv.location || null }).eq("id", id).select());
+  data.coverages = data.coverages.map((x) => (x.id === id ? saved : x));
+  toast("Sesión actualizada con los datos del calendario");
+  await notifyChange({ client: clientById(cv.client_id), cv: saved, changed: colleagueById(cv.colleague_id) });
+  refreshAll();
+}
+
+async function applyAssignment(clientId, newId, kind = "event") {
   const client = clientById(clientId);
   const team = assignTeam();
-  const current = teamCoverages(clientId, team)[0] || null;
+  const current = teamCoverages(clientId, team, kind)[0] || null;
+  const info = kind === "session" ? sessionInfo.get(clientId) || (photoSessionOf(client) ? { date: photoSessionOf(client).date, time: photoSessionOf(client).time || "", location: photoSessionOf(client).location || "" } : null) : null;
   const prevId = current?.colleague_id || "";
   if (prevId === newId) { refreshAll(); return; }
   try {
     if (current?.payment_id) throw new Error("Esa cobertura ya está pagada: cambiala desde la ficha del evento.");
-    if (newId && data.coverages.some((cv) => cv.client_id === clientId && cv.colleague_id === newId && (cv.kind || "event") === "event" && cv.id !== current?.id)) throw new Error("Ya está asignada a este evento.");
+    if (kind === "session" && !info?.date) throw new Error("No encontré la fecha de la sesión de fotos.");
+    if (newId && data.coverages.some((cv) => cv.client_id === clientId && cv.colleague_id === newId && (cv.kind || "event") === kind && cv.id !== current?.id)) throw new Error(kind === "session" ? "Ya está asignada a esta sesión." : "Ya está asignada a este evento.");
     const person = newId ? colleagueById(newId) : null;
     if (current?.drive_shared_at) await driveRequest("unshare", { coverageId: current.id }).catch(() => {});
     let saved = null;
     if (!newId) {
       await run(supabase.from("colleague_coverages").delete().eq("id", current.id));
       data.coverages = data.coverages.filter((x) => x.id !== current.id);
-      toast(`${client?.honoree || "Evento"}: sin asignar`);
+      toast(`${kind === "session" ? "Sesión de " : ""}${client?.honoree || "Evento"}: sin asignar`);
     } else if (current) {
-      [saved] = await run(supabase.from("colleague_coverages").update({ colleague_id: newId, team, arrival_time: current.arrival_time || suggestedArrival(clientId) || null, amount: num(person?.default_fee), role: person?.role || current.role || null, drive_shared_at: null, drive_shared_email: null }).eq("id", current.id).select());
+      [saved] = await run(supabase.from("colleague_coverages").update({ colleague_id: newId, team, arrival_time: current.arrival_time || (kind === "session" ? info?.time : suggestedArrival(clientId)) || null, amount: num(person?.default_fee), role: person?.role || current.role || null, drive_shared_at: null, drive_shared_email: null }).eq("id", current.id).select());
       data.coverages = data.coverages.map((x) => (x.id === current.id ? saved : x));
     } else {
-      [saved] = await run(supabase.from("colleague_coverages").insert({
+      [saved] = await run(supabase.from("colleague_coverages").insert(kind === "session" ? {
+        client_id: clientId, colleague_id: newId, kind, team, role: person?.role || null,
+        work_date: info.date, arrival_time: info.time || null, location: info.location || null, amount: num(person?.default_fee),
+      } : {
         client_id: clientId, colleague_id: newId, kind: "event", team, role: person?.role || null, arrival_time: suggestedArrival(clientId) || null,
         amount: num(person?.default_fee), location: lastLocationForSalon(client?.salon) || client?.salon || null,
       }).select());
@@ -417,7 +522,7 @@ async function applyAssignment(clientId, newId) {
     }
     await notifyChange({ client, cv: saved || current, added: saved ? person : null, removed: prevId && prevId !== newId ? colleagueById(prevId) : null });
     if (saved) {
-      toast(`${client?.honoree || "Evento"} → ${person?.name}`);
+      toast(`${kind === "session" ? "Sesión de " : ""}${client?.honoree || "Evento"} → ${person?.name}`);
       // Si el evento ya tiene carpeta de Drive conectada, se la comparte sola.
       if (client?.driveUrl && person?.email && deps.driveAutoAvailable(client.salon)) await shareDrive(saved.id).catch(() => {});
     }
@@ -1163,6 +1268,9 @@ const ACTIONS = {
   "del-coverage": (id) => deleteCoverage(id),
   "wa-coverage": (id) => { const cv = data.coverages.find((x) => x.id === id); if (cv) sendWhatsapp(colleagueById(cv.colleague_id), coverageMessage(cv)); },
   "share-drive": (id) => shareDrive(id),
+  "assign-kind": (k) => { assignKind = k === "session" ? "session" : "event"; renderColleagues(); },
+  "gcal-reload": () => loadGcalSessions(),
+  "session-sync": (id) => syncSessionCoverage(id),
   mode: (m) => { colMode = m === "assign" ? "assign" : "team"; try { localStorage.setItem(MODE_KEY, colMode); } catch {} renderColleagues(); },
   team: (t) => { teamFilter = t || ""; try { localStorage.setItem(TEAM_KEY, teamFilter); } catch {} renderColleagues(); },
   "notify-wa": (id) => { const c = colleagueById(id); if (c && pendingWa[id]) { sendWhatsapp(c, pendingWa[id]); delete pendingWa[id]; } },
