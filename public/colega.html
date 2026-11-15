@@ -93,6 +93,15 @@
   .cal-legend { display:flex; flex-wrap:wrap; gap:14px; align-items:center; margin:10px 2px 0; font-size:12px; color:var(--muted); }
   .cal-legend span { display:inline-flex; align-items:center; gap:6px; }
   .linkbtn { margin-left:auto; background:none; border:0; color:var(--gold-2); text-decoration:underline; cursor:pointer; font-size:13px; padding:6px 0; min-height:32px; }
+  .cal-cell.blocked { background:rgba(239,107,107,.14); border-color:rgba(239,107,107,.35); color:#ffb3b3; }
+  .avail { display:grid; gap:10px; margin:0 0 12px; padding:12px; border:1px dashed var(--line); border-radius:12px; }
+  .avail .row { display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap; }
+  .avail p { margin:0; font-size:14px; }
+  .avail .warn { color:var(--warn); }
+  .blocked-box { border-style:solid; border-color:rgba(239,107,107,.4); background:rgba(239,107,107,.08); }
+  .avail a { text-decoration:none; text-align:center; }
+  .avail-ok { display:grid; gap:8px; font-size:14px; color:var(--ok); }
+  .cal-item b.repl { color:var(--warn); font-size:12px; }
   .cal-item { width:100%; text-align:left; display:grid; gap:3px; background:var(--panel); border:1px solid var(--gold-border); border-left:4px solid var(--gold); border-radius:12px; padding:12px 14px; margin-bottom:8px; cursor:pointer; }
   .cal-item.s { border-left-color:#60a5fa; }
   .cal-item span { color:var(--muted); font-size:13px; }
@@ -115,6 +124,7 @@
   const root = document.getElementById("root");
   let session = null, state = null, tab = "mine", showPast = false, openIds = new Set(), loginError = "";
   let calMonth = todayIso().slice(0, 7), calDay = ""; // calendario propio (pestaña "Calendario")
+  let blockForm = "", lastBlock = null; // "No puedo este día": día con el formulario abierto / último bloqueo con trabajos
 
   const esc = (v) => String(v ?? "").replace(/[&<>'"]/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", "'":"&#39;", '"':"&quot;" }[c]));
   function load() { try { return JSON.parse(localStorage.getItem(KEY) || "null"); } catch { return null; } }
@@ -210,6 +220,7 @@
     const first = new Date(y, m - 1, 1), days = new Date(y, m, 0).getDate();
     const lead = (first.getDay() + 6) % 7; // semana empieza el lunes
     const today = todayIso();
+    const blocked = new Map((state.blocked || []).map((b) => [b.day, b]));
     if (!calDay || !calDay.startsWith(calMonth)) {
       const inMonth = [...byDay.keys()].filter((d) => d.startsWith(calMonth)).sort();
       calDay = today.startsWith(calMonth) ? today : inMonth[0] || `${calMonth}-01`;
@@ -220,7 +231,8 @@
       const iso = `${calMonth}-${String(d).padStart(2, "0")}`;
       const its = byDay.get(iso) || [];
       const dots = its.slice(0, 3).map((it) => `<i class="dot ${it.cov.kind === "session" ? "s" : "e"}"></i>`).join("");
-      cells.push(`<button class="cal-cell ${iso === today ? "today" : ""} ${iso === calDay ? "sel" : ""} ${its.length ? "has" : ""}" data-day="${iso}" aria-label="${esc(fmt(iso, { weekday: "long", day: "numeric", month: "long" }))}${its.length ? `: ${its.length} ${its.length === 1 ? "trabajo" : "trabajos"}` : ""}"><span>${d}</span><span class="dots">${dots}${its.length > 3 ? "+" : ""}</span></button>`);
+      const off = blocked.has(iso);
+      cells.push(`<button class="cal-cell ${iso === today ? "today" : ""} ${iso === calDay ? "sel" : ""} ${its.length ? "has" : ""} ${off ? "blocked" : ""}" data-day="${iso}" aria-label="${esc(fmt(iso, { weekday: "long", day: "numeric", month: "long" }))}${its.length ? `: ${its.length} ${its.length === 1 ? "trabajo" : "trabajos"}` : ""}${off ? ", no podés" : ""}"><span>${d}</span><span class="dots">${off ? "🚫" : dots}${!off && its.length > 3 ? "+" : ""}</span></button>`);
     }
     const sel = (byDay.get(calDay) || []).sort((a, b) => String(a.cov.arrival || "").localeCompare(String(b.cov.arrival || "")));
     const monthCount = items.filter((it) => it.date.startsWith(calMonth)).length;
@@ -233,13 +245,37 @@
       </div>
       <div class="cal-week" aria-hidden="true"><span>Lun</span><span>Mar</span><span>Mié</span><span>Jue</span><span>Vie</span><span>Sáb</span><span>Dom</span></div>
       <div class="cal-grid">${cells.join("")}</div>
-      <div class="cal-legend"><span><i class="dot e"></i> Evento</span><span><i class="dot s"></i> Sesión de fotos</span>${calMonth !== today.slice(0, 7) ? `<button class="linkbtn" data-cal="today">Volver a hoy</button>` : ""}</div>
+      <div class="cal-legend"><span><i class="dot e"></i> Evento</span><span><i class="dot s"></i> Sesión de fotos</span><span>🚫 No podés</span>${calMonth !== today.slice(0, 7) ? `<button class="linkbtn" data-cal="today">Volver a hoy</button>` : ""}</div>
       <h2 class="month">${esc(fmt(calDay, { weekday: "long", day: "numeric", month: "long" }))}</h2>
+      ${dayAvailabilityHtml(calDay, sel, blocked.get(calDay))}
       ${sel.length ? sel.map((it) => `<button class="cal-item ${it.cov.kind === "session" ? "s" : ""}" data-open="${esc(it.key)}" data-date="${esc(it.date)}">
-          <strong>${it.cov.arrival ? `${esc(it.cov.arrival)} h · ` : ""}${it.cov.kind === "session" ? "📷 Sesión · " : ""}${esc(it.c.honoree || "Evento")}</strong>
+          ${blocked.has(it.date) ? `<b class="repl">⚠ Pediste reemplazo</b>` : ""}<strong>${it.cov.arrival ? `${esc(it.cov.arrival)} h · ` : ""}${it.cov.kind === "session" ? "📷 Sesión · " : ""}${esc(it.c.honoree || "Evento")}</strong>
           <span>${esc([it.c.event_type, it.cov.location || it.c.salon, it.cov.role].filter(Boolean).join(" · "))}</span>
           <em>Ver detalle ›</em></button>`).join("") : `<div class="empty">No tenés trabajos este día.</div>`}
     </section>`;
+  }
+
+  // "No puedo este día": bloquea la fecha y, si tenía trabajos, le pide reemplazo a Pablo.
+  function dayAvailabilityHtml(day, jobs, blockedDay) {
+    if (day < todayIso()) return "";
+    const boss = (state.boss && state.boss.name) || "Pablo";
+    let wa = "";
+    if (lastBlock && lastBlock.day === day && lastBlock.affected.length) {
+      const bossWa = waLink((state.boss && state.boss.whatsapp) || "");
+      const text = `Hola! Soy ${state.me.name}. No puedo cubrir el ${fmt(day, { weekday: "long", day: "numeric", month: "long" })}: ${lastBlock.affected.map((a) => `${a.kind === "session" ? "sesión de fotos de " : ""}${a.honoree}${a.salon ? ` (${a.salon})` : ""}`).join(", ")}.${lastBlock.reason ? ` Motivo: ${lastBlock.reason}.` : ""} Ya lo marqué en el portal.`;
+      wa = `<div class="avail-ok">✅ Listo: le pedimos reemplazo a ${esc(boss)} en Janos Control.${bossWa ? `<a class="btn btn-primary" href="${esc(bossWa)}?text=${encodeURIComponent(text)}" target="_blank" rel="noopener">💬 Avisarle también por WhatsApp</a>` : ""}</div>`;
+    }
+    if (blockedDay) {
+      return `<div class="avail blocked-box"><p>🚫 Marcaste que <b>no podés</b> este día${blockedDay.reason ? ` · ${esc(blockedDay.reason)}` : ""}.</p>${wa}<button class="btn" data-act="unblock" data-d="${esc(day)}">Liberar este día</button></div>`;
+    }
+    if (blockForm === day) {
+      return `<form class="avail" data-block="${esc(day)}">
+        ${jobs.length ? `<p class="warn">⚠ Tenés ${jobs.length} ${jobs.length === 1 ? "trabajo" : "trabajos"} este día: se le va a pedir <b>reemplazo</b> a ${esc(boss)}.</p>` : `<p class="muted" style="margin:0;font-size:14px">${esc(boss)} va a ver que no estás disponible y no te va a asignar nada ese día.</p>`}
+        <label>Motivo (opcional)<input name="reason" maxlength="300" placeholder="Ej. viaje, otro trabajo, salud"></label>
+        <div class="row"><button class="btn" type="button" data-act="block-cancel">Cancelar</button><button class="btn btn-primary" type="submit">Confirmar: no puedo</button></div>
+      </form>`;
+    }
+    return `<div class="avail"><button class="btn" data-act="block-open" data-d="${esc(day)}">🚫 No puedo este día</button></div>`;
   }
 
   function noticesHtml() {
@@ -333,6 +369,14 @@
     }
     if (t.dataset.act === "logout") { save(null); renderLogin(); return; }
     if (t.dataset.act === "reload") { refresh(); return; }
+    if (t.dataset.act === "block-open") { blockForm = t.dataset.d; lastBlock = null; renderApp(); return; }
+    if (t.dataset.act === "block-cancel") { blockForm = ""; renderApp(); return; }
+    if (t.dataset.act === "unblock") {
+      t.disabled = true;
+      try { await call("unblock", { day: t.dataset.d }); state.blocked = (state.blocked || []).filter((b) => b.day !== t.dataset.d); lastBlock = null; renderApp(); toast("Día liberado"); }
+      catch (err) { t.disabled = false; if (err.message !== "session") toast(err.message); }
+      return;
+    }
     if (t.dataset.act === "seen") {
       t.disabled = true;
       try { await call("seen"); state.notices = []; renderApp(); }
@@ -371,6 +415,17 @@
         const out = await call("login", { email: f.get("email"), password: f.get("password") });
         save(out.session); root.innerHTML = `<div class="wrap"><div class="empty">Cargando tus eventos…</div></div>`; refresh();
       } catch (err) { document.getElementById("loginMsg").textContent = err.message; btn.disabled = false; btn.textContent = "Entrar"; }
+      return;
+    }
+    if (form.dataset.block) {
+      const day = form.dataset.block, reason = String(new FormData(form).get("reason") || "").trim();
+      btn.disabled = true;
+      try {
+        const out = await call("block", { day, reason });
+        state.blocked = [...(state.blocked || []).filter((b) => b.day !== day), { day, reason }];
+        blockForm = ""; lastBlock = { day, reason, affected: out.affected || [] };
+        renderApp(); toast(lastBlock.affected.length ? "Listo: se pidió reemplazo" : "Día bloqueado");
+      } catch (err) { btn.disabled = false; if (err.message !== "session") toast(err.message); }
       return;
     }
     if (form.dataset.note) {

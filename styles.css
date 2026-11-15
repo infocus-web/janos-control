@@ -848,3 +848,12 @@ button.col-chip:hover { filter: brightness(1.15); }
 .col-taskkeys fieldset { border: 0; padding: 0; margin: 10px 0 0; display: grid; gap: 6px; }
 .col-taskkeys legend { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; margin-bottom: 4px; }
 .col-taskkeys .col-check { font-size: 13px; }
+
+/* Personal: pedidos de reemplazo */
+.col-repl { border: 1px solid rgba(251,191,36,.4); background: var(--amber-soft); border-radius: var(--radius); padding: 12px 14px; margin: 0 0 16px; display: grid; gap: 10px; }
+.col-repl h3 { margin: 0; font-size: 14px; color: var(--amber); }
+.col-repl-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0 0; border-top: 1px solid rgba(251,191,36,.2); }
+.col-repl-row > div:first-child { display: grid; gap: 2px; min-width: 0; }
+.col-repl-row span { color: var(--ink-2); font-size: 12.5px; }
+.col-repl-act { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.col-repl-act select { min-width: 220px; }

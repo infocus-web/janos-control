@@ -11,6 +11,9 @@ import { createClient } from "@supabase/supabase-js";
 //  - note    { clientId, body }    → agrega una nota al evento
 //  - unnote  { noteId }            → borra una nota suya
 //  - seen                          → marca sus avisos como leídos
+//  - block   { day, reason }       → "No puedo este día": si tenía trabajos
+//                                     ese día, quedan con pedido de reemplazo
+//  - unblock { day }               → libera el día (y retira el pedido)
 // (data/mark/note/unnote van con Authorization: Bearer <access_token>)
 //
 // Reglas (todo se filtra acá, con service role):
@@ -33,6 +36,7 @@ function send(res, status, body) {
 function sinceIso() { return new Date(Date.now() - 3 * 3600000 - PAST_DAYS * 86400000).toISOString().slice(0, 10); }
 function publicSession(s) { return s ? { access_token: s.access_token, refresh_token: s.refresh_token, expires_at: s.expires_at } : null; }
 function hhmm(t) { return t ? String(t).slice(0, 5) : ""; }
+function todayAr() { return new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10); }
 
 async function colleagueForUser(admin, userId) {
   const { data, error } = await admin.from("colleagues").select("id,owner_id,name,role,salons,task_keys,active").eq("user_id", userId).maybeSingle();
@@ -145,7 +149,10 @@ export default async function handler(req, res) {
       // Avisos sin leer (asignaciones, cambios y bajas que hizo el dueño).
       const { data: notices, error: nErr } = await admin.from("colleague_notices").select("id,kind,message,created_at").eq("colleague_id", colleague.id).is("read_at", null).order("created_at", { ascending: false }).limit(30);
       if (nErr) throw nErr;
-      return send(res, 200, { me: { name: colleague.name, role: colleague.role, salons: colleague.salons || [] }, ...out, notices: notices || [] });
+      const { data: blocked, error: bErr } = await admin.from("colleague_unavailability").select("day,reason").eq("colleague_id", colleague.id).gte("day", todayAr()).order("day");
+      if (bErr) throw bErr;
+      const { data: owner } = await admin.from("profiles").select("display_name,whatsapp").eq("id", colleague.owner_id).maybeSingle();
+      return send(res, 200, { me: { name: colleague.name, role: colleague.role, salons: colleague.salons || [] }, ...out, notices: notices || [], blocked: blocked || [], boss: { name: owner?.display_name || "", whatsapp: owner?.whatsapp || "" } });
     }
 
     if (action === "seen") {
@@ -176,6 +183,33 @@ export default async function handler(req, res) {
       const { data, error } = await admin.from("colleague_notes").insert({ owner_id: colleague.owner_id, client_id: client.id, colleague_id: colleague.id, author_name: colleague.name, body: text }).select("id,client_id,body,author_name,created_at").single();
       if (error) throw error;
       return send(res, 200, { ok: true, note: data });
+    }
+
+    if (action === "block" || action === "unblock") {
+      const day = String(body.day || "");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return send(res, 400, { error: "Fecha inválida." });
+      if (day < todayAr()) return send(res, 400, { error: "No se pueden bloquear días que ya pasaron." });
+      // Sus trabajos de ese día (evento o sesión), todavía sin pagar.
+      const { data: covs, error: cErr } = await admin.from("colleague_coverages")
+        .select("id,kind,work_date,replacement_requested_at,clients!inner(event_date,honoree,event_type,salon)")
+        .eq("colleague_id", colleague.id).is("payment_id", null);
+      if (cErr) throw cErr;
+      const sameDay = (covs || []).filter((cv) => (cv.work_date || cv.clients.event_date) === day);
+      if (action === "block") {
+        const reason = String(body.reason || "").trim().slice(0, 300) || null;
+        const { error } = await admin.from("colleague_unavailability").upsert({ owner_id: colleague.owner_id, colleague_id: colleague.id, day, reason }, { onConflict: "colleague_id,day" });
+        if (error) throw error;
+        if (sameDay.length) {
+          const { error: uErr } = await admin.from("colleague_coverages").update({ replacement_requested_at: new Date().toISOString(), replacement_reason: reason }).in("id", sameDay.map((cv) => cv.id));
+          if (uErr) throw uErr;
+        }
+        return send(res, 200, { ok: true, affected: sameDay.map((cv) => ({ kind: cv.kind || "event", honoree: cv.clients.honoree, type: cv.clients.event_type, salon: cv.clients.salon })) });
+      }
+      const { error } = await admin.from("colleague_unavailability").delete().eq("colleague_id", colleague.id).eq("day", day);
+      if (error) throw error;
+      const flagged = sameDay.filter((cv) => cv.replacement_requested_at).map((cv) => cv.id);
+      if (flagged.length) await admin.from("colleague_coverages").update({ replacement_requested_at: null, replacement_reason: null }).in("id", flagged);
+      return send(res, 200, { ok: true });
     }
 
     if (action === "unnote") {
