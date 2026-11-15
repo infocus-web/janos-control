@@ -843,6 +843,21 @@ function coverageBase(clientId, kind = "event", colleague = null, date = "") {
 // incluye edición, también cobra su % sobre lo que se cobra por la edición.
 const EDIT_TASK_KEYS = ["coveragePhotoEdit", "coverageVideoEdit"];
 function editsEvents(colleague) { return (colleague?.task_keys || []).some((k) => EDIT_TASK_KEYS.includes(k)); }
+function editKeyFor(c) { return /vide/i.test(c?.role || "") ? "coverageVideoEdit" : "coveragePhotoEdit"; }
+// Botón «✂ Edita: Sí/No» del detalle: agrega o saca la tarea de editar y
+// recalcula los trabajos sin pagar (los montos cambiados a mano no se tocan).
+async function toggleEdit(id) {
+  const found = colleagueById(id); if (!found) return;
+  const before = { ...found, task_keys: [...(found.task_keys || [])] };
+  const keys = new Set(before.task_keys || []);
+  const turnOn = !editsEvents(before);
+  if (turnOn) keys.add(editKeyFor(before)); else EDIT_TASK_KEYS.forEach((k) => keys.delete(k));
+  const [saved] = await run(supabase.from("colleagues").update({ task_keys: [...keys] }).eq("id", id).select());
+  data.colleagues = data.colleagues.map((c) => (c.id === id ? saved : c));
+  await refreshPendingFees(before, saved);
+  toast(turnOn ? `${firstName(saved.name)} ahora edita: cobra su % también sobre la edición` : `${firstName(saved.name)} ya no edita: cobra su % solo sobre la cobertura`);
+  refreshAll();
+}
 function editBase(clientId, colleague, date = "") {
   const client = clientById(clientId); if (!client || !editsEvents(colleague)) return 0;
   const video = /vide/i.test(colleague?.role || "");
@@ -928,7 +943,7 @@ async function saveColleagueForm(form) {
   if (id) row.active = f.get("active") === "on";
   await withBusy(form, async () => {
     if (id) {
-      const before = colleagueById(id);
+      const found = colleagueById(id), before = found ? { ...found, task_keys: [...(found.task_keys || [])] } : null;
       const [saved] = await run(supabase.from("colleagues").update(row).eq("id", id).select());
       data.colleagues = data.colleagues.map((c) => (c.id === id ? saved : c));
       await refreshPendingFees(before, saved);
@@ -1281,6 +1296,7 @@ function openColleagueDetail(id) {
         <button class="secondary-btn" data-col="add-discount" data-id="${id}">+ Descuento</button>
         <button class="secondary-btn" data-col="add-debt" data-id="${id}" title="Plata que le debés de trabajos anteriores, sin elegir eventos">+ Deuda anterior</button>
         <button class="secondary-btn" data-col="calendar" data-id="${id}" ${c.active ? "" : "disabled"}>📅 Calendario</button>
+        ${isPercent(c) ? `<button class="secondary-btn col-edit-toggle ${editsEvents(c) ? "on" : ""}" data-col="toggle-edit" data-id="${id}" aria-pressed="${editsEvents(c)}" title="${editsEvents(c) ? "Cobra su % sobre la cobertura y la edición. Tocá para que deje de editar." : "Cobra su % solo sobre la cobertura. Tocá si también edita."}">✂ Edita: ${editsEvents(c) ? "Sí" : "No"}</button>` : ""}
         <button class="ghost-btn" data-col="edit-colleague" data-id="${id}">✎ Editar</button>
       </div>
     </div>
@@ -1679,6 +1695,7 @@ const ACTIONS = {
   "add-discount": (id) => openDiscountForm(id),
   "add-debt": (id) => openDebtForm(id),
   split: () => openSplitForm(),
+  "toggle-edit": (id) => toggleEdit(id),
   "del-debt": (id) => deleteDebt(id),
   "del-discount": (id) => deleteDiscount(id),
   "edit-discount": (id) => { const d = data.discounts.find((x) => x.id === id); if (d) openDiscountForm(d.colleague_id, d); },

@@ -900,3 +900,6 @@ button.col-chip:hover { filter: brightness(1.15); }
 .col-split-row input { width: 100%; text-align: right; font-variant-numeric: tabular-nums; border: 1px solid var(--input-border); border-radius: 9px; padding: 8px 10px; color: var(--ink); background: var(--input-bg); }
 .col-split-row input:focus { outline: none; border-color: var(--gold-border); }
 @media (max-width: 560px) { .col-split-row { grid-template-columns: 1fr 110px; } .col-split-row b { display: none; } }
+
+/* Colegas: botón «✂ Edita: Sí/No» del detalle */
+.col-edit-toggle.on { color: var(--green); background: var(--green-soft); border-color: rgba(52,211,153,.35); }
