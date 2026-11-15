@@ -188,12 +188,19 @@ export async function loadColleagues() {
   }
   refreshAll();
 }
-// Para el calendario de app.js: quién está asignado a cubrir el evento (no sesiones).
-export function assignedNamesForClient(clientId) {
-  return data.coverages
-    .filter((cv) => cv.client_id === clientId && !isSession(cv))
-    .map((cv) => colleagueById(cv.colleague_id)?.name)
-    .filter(Boolean);
+// Para el calendario de app.js: quién cubre el evento (no sesiones), separado
+// en fotografía (equipo Pablo) y video (equipos Dylan y Gustavo). Para los
+// externos vale el equipo que los asignó (cv.team).
+const VIDEO_TEAMS = ["Dylan", "Gustavo"];
+export function assignedForClient(clientId) {
+  const out = { foto: [], video: [] };
+  data.coverages.filter((cv) => cv.client_id === clientId && !isSession(cv)).forEach((cv) => {
+    const c = colleagueById(cv.colleague_id);
+    if (!c?.name) return;
+    const team = isExternal(c) ? (cv.team || "Pablo") : teamOf(c);
+    out[VIDEO_TEAMS.includes(team) ? "video" : "foto"].push(c.name);
+  });
+  return out;
 }
 export function resetColleagues() { data = emptyData(); status = "idle"; openColleagueId = null; closeDialog("colDetailDialog"); closeDialog("colFormDialog"); }
 
