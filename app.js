@@ -2301,5 +2301,7 @@ initColleagues({
   refreshClientDetail:(id)=>openClientDetail(id),
   // Confirmar una tarea que una colega marcó como hecha desde su portal.
   updateTask,
+  // Tarifa vigente a una fecha (para el personal que cobra un % de la cobertura).
+  getRate,
 });
 bootstrap();

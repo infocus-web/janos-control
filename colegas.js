@@ -276,7 +276,7 @@ function cardHtml(c) {
       <div><dt>Próxima cobertura</dt><dd>${nextClient ? `${esc(deps.dateText(coverageDate(s.next)))} · ${isSession(s.next) ? "Sesión · " : ""}${esc(nextClient.honoree)}` : "—"}</dd></div>
       <div><dt>A futuro</dt><dd>${money(s.future)}</dd></div>
       <div><dt>Descuentos pendientes</dt><dd>${money(s.discountLeft)}</dd></div>
-      <div><dt>Tarifa</dt><dd>${money(c.default_fee)}</dd></div>
+      <div><dt>Tarifa</dt><dd>${esc(payLabel(c))}</dd></div>
     </dl>
     <div class="col-card-contact">${c.phone ? `<span>📱 ${esc(c.phone)}</span>` : `<span class="col-missing">Sin WhatsApp</span>`}${c.email ? `<span>✉ ${esc(c.email)}</span>` : `<span class="col-missing">Sin Gmail (para Drive)</span>`}</div>
     <div class="col-card-portal">${(c.salons || []).length ? `<span class="col-chip">🏛 ${esc(c.salons.join(", "))}</span>` : `<span class="col-chip warn">Sin salón asignado</span>`}${c.user_id ? `<button class="col-chip ok" data-col="access" data-id="${c.id}" title="Ver o cambiar su acceso">🔑 Con acceso al portal</button>` : `<button class="col-chip action" data-col="access" data-id="${c.id}" ${c.active ? "" : "disabled"}>🔑 Darle acceso al portal</button>`}</div>
@@ -354,7 +354,7 @@ async function replaceCoverage(cvId, newId) {
     if (data.coverages.some((x) => x.client_id === cv.client_id && x.colleague_id === newId && (x.kind || "event") === (cv.kind || "event"))) throw new Error("Esa persona ya está asignada a ese trabajo.");
     if (cv.drive_shared_at) await driveRequest("unshare", { coverageId: cv.id }).catch(() => {});
     const [saved] = await run(supabase.from("colleague_coverages").update({
-      colleague_id: newId, team: inTeamCoverage(cv, currentPanel()) ? currentPanel() : cv.team, amount: num(person?.default_fee), role: person?.role || cv.role || null,
+      colleague_id: newId, team: inTeamCoverage(cv, currentPanel()) ? currentPanel() : cv.team, amount: feeFor(person, cv.client_id, cv.kind || "event", coverageDate(cv)), role: person?.role || cv.role || null,
       drive_shared_at: null, drive_shared_email: null, replacement_requested_at: null, replacement_reason: null,
     }).eq("id", cvId).select());
     data.coverages = data.coverages.map((x) => (x.id === cvId ? saved : x));
@@ -624,15 +624,15 @@ async function applyAssignment(clientId, newId, kind = "event") {
       data.coverages = data.coverages.filter((x) => x.id !== current.id);
       toast(`${kind === "session" ? "Sesión de " : ""}${client?.honoree || "Evento"}: sin asignar`);
     } else if (current) {
-      [saved] = await run(supabase.from("colleague_coverages").update({ colleague_id: newId, team, arrival_time: current.arrival_time || (kind === "session" ? info?.time : suggestedArrival(clientId)) || null, amount: num(person?.default_fee), role: person?.role || current.role || null, drive_shared_at: null, drive_shared_email: null }).eq("id", current.id).select());
+      [saved] = await run(supabase.from("colleague_coverages").update({ colleague_id: newId, team, arrival_time: current.arrival_time || (kind === "session" ? info?.time : suggestedArrival(clientId)) || null, amount: feeFor(person, clientId, kind, kind === "session" ? info?.date : ""), role: person?.role || current.role || null, drive_shared_at: null, drive_shared_email: null }).eq("id", current.id).select());
       data.coverages = data.coverages.map((x) => (x.id === current.id ? saved : x));
     } else {
       [saved] = await run(supabase.from("colleague_coverages").insert(kind === "session" ? {
         client_id: clientId, colleague_id: newId, kind, team, role: person?.role || null,
-        work_date: info.date, arrival_time: info.time || null, location: info.location || null, amount: num(person?.default_fee),
+        work_date: info.date, arrival_time: info.time || null, location: info.location || null, amount: feeFor(person, clientId, "session", info.date),
       } : {
         client_id: clientId, colleague_id: newId, kind: "event", team, role: person?.role || null, arrival_time: suggestedArrival(clientId) || null,
-        amount: num(person?.default_fee), location: lastLocationForSalon(client?.salon) || client?.salon || null,
+        amount: feeFor(person, clientId, "event"), location: lastLocationForSalon(client?.salon) || client?.salon || null,
       }).select());
       data.coverages = [...data.coverages, saved];
     }
@@ -774,7 +774,7 @@ function head(eyebrow, title, closeId) { return `<div class="modal-head"><div><p
 const PHASE_ORDER = ["Preparación", "Pre-evento", "Evento", "Servicios elegidos", "Servicios VIP", "Adicionales", "Post-evento", "Entrega"];
 function taskTypes() {
   const map = new Map();
-  deps.getClients().forEach((c) => (c.tasks || []).forEach((t) => { if (t.key && !map.has(t.key)) map.set(t.key, { key: t.key, title: t.title, phase: t.phase || "Otras" }); }));
+  deps.getClients().forEach((c) => (c.tasks || []).forEach((t) => { if (t.key && !map.has(t.key)) map.set(t.key, { key: t.key, title: String(t.title || t.key), phase: t.phase || "Otras" }); }));
   return [...map.values()].sort((a, b) => ((PHASE_ORDER.indexOf(a.phase) + 1 || 99) - (PHASE_ORDER.indexOf(b.phase) + 1 || 99)) || a.title.localeCompare(b.title));
 }
 function taskKeysFieldset(selected = []) {
@@ -787,6 +787,31 @@ function taskKeysFieldset(selected = []) {
     ${phases.map((ph) => `<fieldset><legend>${esc(ph)}</legend>${types.filter((t) => t.phase === ph).map((t) => `<label class="col-check"><input type="checkbox" name="task_keys" value="${esc(t.key)}" ${sel.has(t.key) ? "checked" : ""}> ${esc(t.title)}</label>`).join("")}</fieldset>`).join("") || `<span class="col-sub">Todavía no hay tareas cargadas en tus clientes.</span>`}
   </details>`;
 }
+
+// ── pago: tarifa fija o % de lo que se cobra por la cobertura ─────────────
+function isPercent(c) { return c?.pay_mode === "percent" && Number(c.pay_percent) > 0; }
+// Lo que se cobra por la cobertura de ese trabajo (tarifa vigente a la fecha).
+function coverageBase(clientId, kind = "event", colleague = null, date = "") {
+  const client = clientById(clientId); if (!client) return 0;
+  const video = /vide/i.test(colleague?.role || "");
+  const keys = kind === "session"
+    ? (video ? ["bookCoverageVideo", "bookCoveragePhoto"] : ["bookCoveragePhoto", "bookCoverageVideo"])
+    : (video ? ["coverageVideoCapture", "coveragePhoto", "informal"] : ["coveragePhoto", "coverageVideoCapture", "informal"]);
+  const task = keys.map((k) => (client.tasks || []).find((t) => t.key === k)).find(Boolean);
+  const rateKey = task?.rateKey || (kind === "session" ? "book" : "eventCoverage");
+  return num(deps.getRate ? deps.getRate(rateKey, date || client.eventDate) : 0);
+}
+function pctHelp(pct) {
+  const base = num(deps.getRate ? deps.getRate("eventCoverage", today()) : 0);
+  return `Se calcula sobre lo que cobrás por la cobertura de cada evento (hoy ${money(base)})${pct ? `: ${pct}% = ${money(Math.round(base * pct / 100))} por evento` : ""}. Al asignarle un evento se usa la tarifa vigente a la fecha de ese evento.`;
+}
+// Monto a pagarle a esa persona por ese trabajo.
+function feeFor(colleague, clientId, kind = "event", date = "") {
+  if (!colleague) return 0;
+  if (!isPercent(colleague)) return num(colleague.default_fee);
+  return Math.round(coverageBase(clientId, kind, colleague, date) * Number(colleague.pay_percent) / 100);
+}
+function payLabel(c) { return isPercent(c) ? `${Number(c.pay_percent)}% de la cobertura` : money(c.default_fee); }
 
 function salonOptions(selected = []) {
   const set = new Set([...(selected || []), ...deps.getClients().map((c) => c.salon).filter(Boolean)]);
@@ -804,12 +829,18 @@ function openColleagueForm(colleague) {
       <label>Equipo (quién lo maneja y le paga)<select name="team">${allTeams().map((t) => `<option value="${esc(t)}" ${teamOf(c) === t ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></label>
       <label>WhatsApp<input name="phone" type="tel" inputmode="tel" value="${esc(c.phone || "")}" placeholder="Ej. 11 2345 6789"></label>
       <label>Gmail (para compartirle Drive)<input name="email" type="email" inputmode="email" value="${esc(c.email || "")}" placeholder="nombre@gmail.com"></label>
-      <label>Tarifa por evento<input name="default_fee" type="number" min="0" step="1" inputmode="numeric" value="${Number(c.default_fee) || ""}" placeholder="Ej. 60000"></label>
+      <label>Forma de pago<select name="pay_mode" data-col-paymode>
+        <option value="fixed" ${isPercent(c) ? "" : "selected"}>Tarifa fija por evento</option>
+        <option value="percent" ${isPercent(c) ? "selected" : ""}>Porcentaje de la cobertura</option>
+      </select></label>
+      <label class="${isPercent(c) ? "" : "hidden"}" data-col-pct>Porcentaje (%)<input name="pay_percent" type="number" min="1" max="100" step="0.5" inputmode="decimal" value="${Number(c.pay_percent) || ""}" placeholder="Ej. 30"></label>
+      <label class="${isPercent(c) ? "hidden" : ""}" data-col-fixed>Tarifa por evento<input name="default_fee" type="number" min="0" step="1" inputmode="numeric" value="${Number(c.default_fee) || ""}" placeholder="Ej. 60000"></label>
       ${c.id ? `<label class="col-check"><input type="checkbox" name="active" ${c.active ? "checked" : ""}> Activo (si lo desactivás, deja de funcionar su calendario)</label>` : ""}
     </div>
     <fieldset class="col-salons"><legend>Salones asignados <small>(ve todos los eventos y tareas de estos salones en su portal)</small></legend>
       ${salonOptions(c.salons).map((s) => `<label class="col-check"><input type="checkbox" name="salons" value="${esc(s)}" ${(c.salons || []).includes(s) ? "checked" : ""}> ${esc(s)}</label>`).join("") || `<span class="col-sub">Todavía no hay salones cargados en tus clientes.</span>`}
     </fieldset>
+    <p class="col-help ${isPercent(c) ? "" : "hidden"}" data-col-pct-help>${pctHelp(Number(c.pay_percent) || 0)}</p>
     ${isExternal(c) ? "" : taskKeysFieldset(c.task_keys)}
     <label class="full-label">Notas<textarea name="notes" rows="2" placeholder="Alias para transferir, equipo que usa, etc.">${esc(c.notes || "")}</textarea></label>
     <datalist id="colRoleList"><option>Fotógrafo</option><option>Videógrafo</option><option>Asistente</option><option>Drone</option></datalist>
@@ -831,12 +862,15 @@ async function saveColleagueForm(form) {
     phone: String(f.get("phone") || "").trim() || null,
     email: email || null,
     default_fee: num(f.get("default_fee")),
+    pay_mode: f.get("pay_mode") === "percent" ? "percent" : "fixed",
+    pay_percent: f.get("pay_mode") === "percent" ? num(f.get("pay_percent")) || null : null,
     notes: String(f.get("notes") || "").trim() || null,
     salons: f.getAll("salons").map(String),
     team: String(f.get("team") || "Pablo"),
   };
   if (form.querySelector("input[name=task_keys]")) row.task_keys = f.getAll("task_keys").map(String);
   if (!row.name) { toast("Poné el nombre del colega."); return; }
+  if (row.pay_mode === "percent" && !(row.pay_percent > 0 && row.pay_percent <= 100)) { toast("Poné un porcentaje entre 1 y 100."); return; }
   const id = form.dataset.id;
   if (id) row.active = f.get("active") === "on";
   await withBusy(form, async () => {
@@ -894,7 +928,7 @@ function openCoverageForm(clientId, coverage, kind = "event") {
     <div class="form-grid">
       <label>Colega<select name="colleague_id" required ${paid ? "disabled" : ""}>
         <option value="">Elegí de la lista…</option>
-        ${allTeams().filter((t) => options.some((c) => teamOf(c) === t)).map((t) => `<optgroup label="${esc(teamLabel(t))}">${options.filter((c) => teamOf(c) === t).map((c) => `<option value="${c.id}" data-fee="${Number(c.default_fee) || 0}" data-role="${esc(c.role || "")}" ${c.id === cv.colleague_id ? "selected" : ""}>${esc(c.name)}${c.role ? ` · ${esc(c.role)}` : ""}</option>`).join("")}</optgroup>`).join("")}
+        ${allTeams().filter((t) => options.some((c) => teamOf(c) === t)).map((t) => `<optgroup label="${esc(teamLabel(t))}">${options.filter((c) => teamOf(c) === t).map((c) => `<option value="${c.id}" data-fee="${feeFor(c, clientId, cv.kind || "event", cv.work_date || "")}" data-role="${esc(c.role || "")}" ${c.id === cv.colleague_id ? "selected" : ""}>${esc(c.name)}${c.role ? ` · ${esc(c.role)}` : ""}</option>`).join("")}</optgroup>`).join("")}
         ${coverage ? "" : `<option value="__new">＋ Agregar un colega nuevo…</option><option value="__ext">＋ Persona externa (ajena a los equipos)…</option>`}
       </select></label>
       <label>Función en este evento<input name="role" maxlength="60" value="${esc(cv.role || "")}" placeholder="Fotógrafo, videógrafo…" list="colRoleList2"></label>
@@ -1511,6 +1545,12 @@ export function initColleagues(dependencies) {
   });
   document.addEventListener("change", (e) => {
     if (e.target.matches("#colColleagueForm input[name=task_keys]")) { const n = e.target.form.querySelectorAll("input[name=task_keys]:checked").length; const b = e.target.form.querySelector("[data-col-taskkeys-count]"); if (b) b.textContent = n; }
+    if (e.target.matches("[data-col-paymode]")) {
+      const f = e.target.form, pct = e.target.value === "percent";
+      f.querySelector("[data-col-pct]").classList.toggle("hidden", !pct);
+      f.querySelector("[data-col-pct-help]").classList.toggle("hidden", !pct);
+      f.querySelector("[data-col-fixed]").classList.toggle("hidden", pct);
+    }
     if (e.target.matches("[data-col-toggle-inactive]")) { showInactive = e.target.checked; renderColleagues(); }
     if (e.target.matches("[data-col-assign]")) assignFromSelector(e.target);
     if (e.target.matches("[data-col-replace]")) {
@@ -1530,6 +1570,7 @@ export function initColleagues(dependencies) {
   });
   document.addEventListener("input", (e) => {
     const form = e.target.form;
+    if (form?.id === "colColleagueForm" && e.target.name === "pay_percent") { const h = form.querySelector("[data-col-pct-help]"); if (h) h.textContent = pctHelp(Number(e.target.value) || 0); }
     if (form?.id === "colPaymentForm" && e.target.name === "advance") e.target.setAttribute("data-auto", "0");
     if (form?.id === "colPaymentForm") updatePaymentTotals(form);
     if (form?.id === "colDiscountForm") updateDiscountHelp(form);
