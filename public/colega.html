@@ -74,6 +74,29 @@
   .notices ul { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
   .notices li { font-size:14px; line-height:1.4; display:grid; grid-template-columns:22px 1fr; gap:6px; }
   .notices li small { grid-column:2; color:var(--muted); font-size:12px; }
+  .cal { margin-top:8px; }
+  .cal-head { display:grid; grid-template-columns:44px 1fr 44px; align-items:center; gap:8px; text-align:center; margin-bottom:10px; }
+  .cal-head strong { display:block; font-size:18px; }
+  .cal-head small { color:var(--muted); font-size:12px; }
+  .cal-head .btn { padding:0; font-size:22px; }
+  .cal-week, .cal-grid { display:grid; grid-template-columns:repeat(7, minmax(0, 1fr)); gap:4px; }
+  .cal-week span { text-align:center; font-size:11px; color:var(--muted); text-transform:uppercase; padding:4px 0; }
+  .cal-cell { aspect-ratio:1 / 1; min-height:44px; min-width:0; border-radius:10px; border:1px solid transparent; background:var(--panel); color:var(--ink); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; cursor:pointer; font-size:15px; padding:0; }
+  .cal-cell.blank { background:transparent; cursor:default; }
+  .cal-cell.has { background:var(--panel-2); font-weight:700; }
+  .cal-cell.today { border-color:var(--gold-border); color:var(--gold-2); }
+  .cal-cell.sel { border-color:var(--gold); background:var(--gold-soft); }
+  .cal-cell:focus-visible { outline:2px solid var(--gold); outline-offset:2px; }
+  .dots { display:flex; gap:3px; min-height:7px; font-size:10px; color:var(--muted); align-items:center; }
+  .dot { width:7px; height:7px; border-radius:50%; display:inline-block; background:var(--gold); }
+  .dot.s { background:#60a5fa; }
+  .cal-legend { display:flex; flex-wrap:wrap; gap:14px; align-items:center; margin:10px 2px 0; font-size:12px; color:var(--muted); }
+  .cal-legend span { display:inline-flex; align-items:center; gap:6px; }
+  .linkbtn { margin-left:auto; background:none; border:0; color:var(--gold-2); text-decoration:underline; cursor:pointer; font-size:13px; padding:6px 0; min-height:32px; }
+  .cal-item { width:100%; text-align:left; display:grid; gap:3px; background:var(--panel); border:1px solid var(--gold-border); border-left:4px solid var(--gold); border-radius:12px; padding:12px 14px; margin-bottom:8px; cursor:pointer; }
+  .cal-item.s { border-left-color:#60a5fa; }
+  .cal-item span { color:var(--muted); font-size:13px; }
+  .cal-item em { color:var(--gold-2); font-style:normal; font-size:13px; }
   .empty { text-align:center; padding:40px 16px; color:var(--muted); background:var(--panel); border:1px dashed var(--line); border-radius:14px; }
   .toast { position:fixed; left:50%; bottom:20px; transform:translateX(-50%); background:#2a1f3d; border:1px solid var(--gold-border); padding:12px 16px; border-radius:12px; font-size:14px; z-index:10; max-width:90vw; }
   .toast[hidden] { display:none; }
@@ -91,6 +114,7 @@
   const PACKS = { silver:"Silver", gold:"Golden / All Inclusive", vip:"VIP", informal:"Informal" };
   const root = document.getElementById("root");
   let session = null, state = null, tab = "mine", showPast = false, openIds = new Set(), loginError = "";
+  let calMonth = todayIso().slice(0, 7), calDay = ""; // calendario propio (pestaña "Calendario")
 
   const esc = (v) => String(v ?? "").replace(/[&<>'"]/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", "'":"&#39;", '"':"&quot;" }[c]));
   function load() { try { return JSON.parse(localStorage.getItem(KEY) || "null"); } catch { return null; } }
@@ -151,7 +175,7 @@
     const me = state.me, today = todayIso();
     const mineCount = state.clients.flatMap((c) => c.coverages).filter((cv) => cv.date >= today).length;
     const salonCount = state.clients.filter((c) => c.event_date >= today).length;
-    const list = itemsFor(tab);
+    const list = tab === "cal" ? [] : itemsFor(tab);
     let lastMonth = "";
     const cards = list.map((it) => {
       const m = it.date.slice(0, 7);
@@ -167,10 +191,55 @@
       <nav class="tabs" aria-label="Qué eventos ver">
         <button class="tab ${tab === "mine" ? "active" : ""}" data-tab="mine" aria-pressed="${tab === "mine"}">Mis coberturas <b>${mineCount}</b></button>
         <button class="tab ${tab === "all" ? "active" : ""}" data-tab="all" aria-pressed="${tab === "all"}">Todos los de mi salón <b>${salonCount}</b></button>
+        <button class="tab ${tab === "cal" ? "active" : ""}" data-tab="cal" aria-pressed="${tab === "cal"}">📅 Calendario</button>
       </nav>
-      <label class="toggle"><input type="checkbox" data-act="past" ${showPast ? "checked" : ""}> Ver eventos ya realizados (últimos 60 días)</label>
-      ${list.length ? cards : `<div class="empty">${tab === "mine" ? (showPast ? "No cubriste eventos en los últimos 60 días." : "Todavía no tenés coberturas asignadas.") : (me.salons.length ? "No hay eventos en tu salón." : "Todavía no tenés un salón asignado.")}</div>`}
+      ${tab === "cal" ? calendarHtml() : `<label class="toggle"><input type="checkbox" data-act="past" ${showPast ? "checked" : ""}> Ver eventos ya realizados (últimos 60 días)</label>
+      ${list.length ? cards : `<div class="empty">${tab === "mine" ? (showPast ? "No cubriste eventos en los últimos 60 días." : "Todavía no tenés coberturas asignadas.") : (me.salons.length ? "No hay eventos en tu salón." : "Todavía no tenés un salón asignado.")}</div>`}`}
     </div>`;
+  }
+
+  // ── Calendario propio: solo lo que tiene asignado (eventos y sesiones) ──
+  function myItems() {
+    return state.clients.flatMap((c) => c.coverages.map((cov) => ({ c, cov, date: cov.date, key: `${c.id}:${cov.kind}` })));
+  }
+  function calendarHtml() {
+    const items = myItems();
+    const byDay = new Map();
+    items.forEach((it) => { if (!byDay.has(it.date)) byDay.set(it.date, []); byDay.get(it.date).push(it); });
+    const [y, m] = calMonth.split("-").map(Number);
+    const first = new Date(y, m - 1, 1), days = new Date(y, m, 0).getDate();
+    const lead = (first.getDay() + 6) % 7; // semana empieza el lunes
+    const today = todayIso();
+    if (!calDay || !calDay.startsWith(calMonth)) {
+      const inMonth = [...byDay.keys()].filter((d) => d.startsWith(calMonth)).sort();
+      calDay = today.startsWith(calMonth) ? today : inMonth[0] || `${calMonth}-01`;
+    }
+    const cells = [];
+    for (let i = 0; i < lead; i++) cells.push(`<div class="cal-cell blank" aria-hidden="true"></div>`);
+    for (let d = 1; d <= days; d++) {
+      const iso = `${calMonth}-${String(d).padStart(2, "0")}`;
+      const its = byDay.get(iso) || [];
+      const dots = its.slice(0, 3).map((it) => `<i class="dot ${it.cov.kind === "session" ? "s" : "e"}"></i>`).join("");
+      cells.push(`<button class="cal-cell ${iso === today ? "today" : ""} ${iso === calDay ? "sel" : ""} ${its.length ? "has" : ""}" data-day="${iso}" aria-label="${esc(fmt(iso, { weekday: "long", day: "numeric", month: "long" }))}${its.length ? `: ${its.length} ${its.length === 1 ? "trabajo" : "trabajos"}` : ""}"><span>${d}</span><span class="dots">${dots}${its.length > 3 ? "+" : ""}</span></button>`);
+    }
+    const sel = (byDay.get(calDay) || []).sort((a, b) => String(a.cov.arrival || "").localeCompare(String(b.cov.arrival || "")));
+    const monthCount = items.filter((it) => it.date.startsWith(calMonth)).length;
+    const title = new Intl.DateTimeFormat("es-AR", { month: "long", year: "numeric" }).format(first);
+    return `<section class="cal" aria-label="Mi calendario">
+      <div class="cal-head">
+        <button class="btn" data-cal="prev" aria-label="Mes anterior">‹</button>
+        <div><strong>${esc(title.charAt(0).toUpperCase() + title.slice(1))}</strong><small>${monthCount ? `${monthCount} ${monthCount === 1 ? "trabajo" : "trabajos"}` : "Sin trabajos"}</small></div>
+        <button class="btn" data-cal="next" aria-label="Mes siguiente">›</button>
+      </div>
+      <div class="cal-week" aria-hidden="true"><span>Lun</span><span>Mar</span><span>Mié</span><span>Jue</span><span>Vie</span><span>Sáb</span><span>Dom</span></div>
+      <div class="cal-grid">${cells.join("")}</div>
+      <div class="cal-legend"><span><i class="dot e"></i> Evento</span><span><i class="dot s"></i> Sesión de fotos</span>${calMonth !== today.slice(0, 7) ? `<button class="linkbtn" data-cal="today">Volver a hoy</button>` : ""}</div>
+      <h2 class="month">${esc(fmt(calDay, { weekday: "long", day: "numeric", month: "long" }))}</h2>
+      ${sel.length ? sel.map((it) => `<button class="cal-item ${it.cov.kind === "session" ? "s" : ""}" data-open="${esc(it.key)}" data-date="${esc(it.date)}">
+          <strong>${it.cov.arrival ? `${esc(it.cov.arrival)} h · ` : ""}${it.cov.kind === "session" ? "📷 Sesión · " : ""}${esc(it.c.honoree || "Evento")}</strong>
+          <span>${esc([it.c.event_type, it.cov.location || it.c.salon, it.cov.role].filter(Boolean).join(" · "))}</span>
+          <em>Ver detalle ›</em></button>`).join("") : `<div class="empty">No tenés trabajos este día.</div>`}
+    </section>`;
   }
 
   function noticesHtml() {
@@ -247,8 +316,21 @@
   }, true);
 
   root.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-tab],[data-act],[data-unnote]"); if (!t) return;
+    const t = e.target.closest("[data-tab],[data-act],[data-unnote],[data-cal],[data-day],[data-open]"); if (!t) return;
     if (t.dataset.tab) { tab = t.dataset.tab; renderApp(); return; }
+    if (t.dataset.cal) {
+      if (t.dataset.cal === "today") { calMonth = todayIso().slice(0, 7); calDay = ""; }
+      else { const [y, m] = calMonth.split("-").map(Number); const d = new Date(y, m - 1 + (t.dataset.cal === "next" ? 1 : -1), 1); calMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; calDay = ""; }
+      renderApp(); return;
+    }
+    if (t.dataset.day) { calDay = t.dataset.day; renderApp(); return; }
+    if (t.dataset.open) {
+      // Abre el trabajo en "Mis coberturas" (con los realizados si es del pasado).
+      tab = "mine"; showPast = t.dataset.date < todayIso(); openIds.add(t.dataset.open); renderApp();
+      const el = root.querySelector(`details[data-key="${CSS.escape(t.dataset.open)}"]`);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
     if (t.dataset.act === "logout") { save(null); renderLogin(); return; }
     if (t.dataset.act === "reload") { refresh(); return; }
     if (t.dataset.act === "seen") {
