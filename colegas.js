@@ -1112,7 +1112,7 @@ function openColleagueDetail(id) {
     <h3 class="col-section">Coberturas <small>${covers.length}</small></h3>
     ${covers.length ? `<div class="col-table-wrap"><table class="col-table"><thead><tr><th>Fecha</th><th>Evento</th><th>Función</th><th>Llega</th><th class="num">Monto</th><th></th></tr></thead><tbody>${covers.map(coverRow).join("")}</tbody></table></div>` : `<p class="col-empty">Todavía no tiene eventos asignados. Se asignan desde la ficha de cada evento.</p>`}
     <h3 class="col-section">Descuentos <small>${discounts.length}</small></h3>
-    ${discounts.length ? `<div class="col-table-wrap"><table class="col-table"><thead><tr><th>Concepto</th><th class="num">Total</th><th>Cuotas</th><th class="num">Descontado</th><th class="num">Resta</th><th></th></tr></thead><tbody>${discounts.map((d) => { const rem = discountRemaining(d); const applied = data.applications.filter((a) => a.discount_id === d.id).length; return `<tr><td>${esc(d.description)}<small class="col-sub">${esc(deps.dateText(d.created_on))}</small></td><td class="num">${money(d.total_amount)}</td><td>${applied}/${d.installments}</td><td class="num">${money(discountApplied(d))}</td><td class="num">${rem > 0 ? money(rem) : `<span class="col-chip ok">Saldado</span>`}</td><td>${applied ? "" : `<button class="icon-btn col-mini" title="Borrar descuento" data-col="del-discount" data-id="${d.id}">×</button>`}</td></tr>`; }).join("")}</tbody></table></div>` : `<p class="col-empty">Sin descuentos. Usalos si, por ejemplo, le vendiste equipo y se lo descontás de sus trabajos.</p>`}
+    ${discounts.length ? `<div class="col-table-wrap"><table class="col-table"><thead><tr><th>Concepto</th><th class="num">Total</th><th>Cuotas</th><th class="num">Descontado</th><th class="num">Resta</th><th></th></tr></thead><tbody>${discounts.map((d) => { const rem = discountRemaining(d); const applied = data.applications.filter((a) => a.discount_id === d.id).length; return `<tr><td>${esc(d.description)}<small class="col-sub">${esc(deps.dateText(d.created_on))}</small></td><td class="num">${money(d.total_amount)}</td><td>${applied}/${d.installments}${rem > 0 && d.installments > 1 ? `<small class="col-sub">cuota ${money(suggestedInstallment(d))}</small>` : ""}</td><td class="num">${money(discountApplied(d))}</td><td class="num">${rem > 0 ? money(rem) : `<span class="col-chip ok">Saldado</span>`}</td><td class="col-row-actions">${rem > 0 ? `<button class="icon-btn col-mini" title="Editar cuotas, total o concepto" aria-label="Editar descuento" data-col="edit-discount" data-id="${d.id}">✎</button>` : ""}${applied ? "" : `<button class="icon-btn col-mini" title="Borrar descuento" data-col="del-discount" data-id="${d.id}">×</button>`}</td></tr>`; }).join("")}</tbody></table></div>` : `<p class="col-empty">Sin descuentos. Usalos si, por ejemplo, le vendiste equipo y se lo descontás de sus trabajos.</p>`}
     <h3 class="col-section">Pagos <small>${payments.length}</small></h3>
     ${payments.length ? `<div class="col-table-wrap"><table class="col-table"><thead><tr><th>Fecha</th><th>Eventos</th><th class="num">Bruto</th><th class="num">Descuentos</th><th class="num">Pagado</th><th></th></tr></thead><tbody>${payments.map((p) => `<tr><td>${esc(deps.dateText(p.paid_on))}${p.notes ? `<small class="col-sub">${esc(p.notes)}</small>` : ""}</td><td>${p.kind === "advance" ? `<span class="col-chip">💵 A cuenta</span>` : data.coverages.filter((cv) => cv.payment_id === p.id).length}</td><td class="num">${p.kind === "advance" ? "—" : money(p.gross)}</td><td class="num">${[Number(p.discounts) ? `−${money(p.discounts)}` : "", Number(p.advance_used) ? `−${money(p.advance_used)} a cuenta` : ""].filter(Boolean).join("<br>") || "—"}</td><td class="num"><strong>${money(p.net)}</strong></td><td class="col-row-actions"><button class="icon-btn col-mini" title="Mandar el detalle por WhatsApp" data-col="wa-payment" data-id="${p.id}">💬</button><button class="ghost-btn col-undo" data-col="undo-payment" data-id="${p.id}">Deshacer</button></td></tr>`).join("")}</tbody></table></div>` : `<p class="col-empty">Todavía no le registraste pagos.</p>`}
     ${c.notes ? `<p class="col-notes">📝 ${esc(c.notes)}</p>` : ""}
@@ -1120,15 +1120,19 @@ function openColleagueDetail(id) {
 }
 
 // ── descuentos ────────────────────────────────────────────────────────────
-function openDiscountForm(colleagueId) {
+function openDiscountForm(colleagueId, discount = null) {
   const c = colleagueById(colleagueId); if (!c) return;
-  showDialog("colFormDialog", `<form id="colDiscountForm" data-colleague="${colleagueId}">
-    ${head(c.name, "Nuevo descuento", "colFormDialog")}
+  const d = discount || { description: "", total_amount: "", installments: 1, created_on: today() };
+  const applied = discount ? discountApplied(discount) : 0;
+  const paidCuotas = discount ? data.applications.filter((a) => a.discount_id === discount.id).length : 0;
+  showDialog("colFormDialog", `<form id="colDiscountForm" data-colleague="${colleagueId}" data-id="${discount?.id || ""}">
+    ${head(c.name, discount ? "Editar descuento" : "Nuevo descuento", "colFormDialog")}
+    ${discount && applied > 0 ? `<div class="col-warn">Ya se descontaron ${money(applied)} en ${paidCuotas} ${paidCuotas === 1 ? "pago" : "pagos"}. El total no puede ser menor a eso; las cuotas que cambies se aplican a lo que resta.</div>` : ""}
     <div class="form-grid">
-      <label>Concepto<input name="description" required maxlength="120" placeholder="Ej. Lente 50mm que le vendí"></label>
-      <label>Monto total<input name="total_amount" required type="number" min="1" step="1" inputmode="numeric" placeholder="Ej. 300000"></label>
-      <label>¿En cuántas cuotas?<input name="installments" required type="number" min="1" max="60" step="1" value="1"></label>
-      <label>Fecha<input name="created_on" type="date" value="${today()}"></label>
+      <label>Concepto<input name="description" required maxlength="120" value="${esc(d.description)}" placeholder="Ej. Lente 50mm que le vendí"></label>
+      <label>Monto total<input name="total_amount" required type="number" min="${Math.max(1, applied)}" step="1" inputmode="numeric" value="${d.total_amount === "" ? "" : Number(d.total_amount)}" placeholder="Ej. 300000"></label>
+      <label>¿En cuántas cuotas?<input name="installments" required type="number" min="1" max="60" step="1" value="${Number(d.installments) || 1}"></label>
+      <label>Fecha<input name="created_on" type="date" value="${esc(d.created_on || today())}"></label>
     </div>
     <p class="col-help" data-col-discount-help>Se descuenta todo en el próximo pago.</p>
     <div class="modal-actions">
@@ -1136,19 +1140,29 @@ function openDiscountForm(colleagueId) {
       <button class="primary-btn" type="submit">Guardar descuento</button>
     </div>
   </form>`);
+  updateDiscountHelp(document.getElementById("colDiscountForm"));
 }
 function updateDiscountHelp(form) {
   const total = num(form.elements.total_amount.value), n = Math.max(1, Number(form.elements.installments.value) || 1);
-  form.querySelector("[data-col-discount-help]").textContent = n === 1 ? "Se descuenta todo en el próximo pago." : `Se sugiere descontar ${money(num(total / n))} en cada pago (lo podés cambiar al pagar).`;
+  form.querySelector("[data-col-discount-help]").textContent = !total ? "" : n === 1 ? "Se descuenta todo en el próximo pago." : `Cuota de ${money(num(total / n))} en cada pago (al pagar la podés cambiar o poner en 0 ese mes).`;
 }
 async function saveDiscountForm(form) {
   const f = new FormData(form);
   const row = { colleague_id: form.dataset.colleague, description: String(f.get("description") || "").trim(), total_amount: num(f.get("total_amount")), installments: Math.min(60, Math.max(1, Number(f.get("installments")) || 1)), created_on: f.get("created_on") || today() };
   if (!row.description || row.total_amount <= 0) { toast("Completá el concepto y el monto."); return; }
+  const id = form.dataset.id;
+  const existing = id ? data.discounts.find((d) => d.id === id) : null;
+  if (existing && row.total_amount < discountApplied(existing)) { toast(`El total no puede ser menor a lo ya descontado (${money(discountApplied(existing))}).`); return; }
   await withBusy(form, async () => {
-    const [saved] = await run(supabase.from("colleague_discounts").insert(row).select());
-    data.discounts = [...data.discounts, saved];
-    closeDialog("colFormDialog"); toast("Descuento guardado"); refreshAll();
+    if (existing) {
+      const { colleague_id, ...changes } = row;
+      const [saved] = await run(supabase.from("colleague_discounts").update(changes).eq("id", id).select());
+      data.discounts = data.discounts.map((d) => (d.id === id ? saved : d));
+    } else {
+      const [saved] = await run(supabase.from("colleague_discounts").insert(row).select());
+      data.discounts = [...data.discounts, saved];
+    }
+    closeDialog("colFormDialog"); toast(existing ? "Descuento actualizado" : "Descuento guardado"); refreshAll();
   });
 }
 async function deleteDiscount(id) {
@@ -1367,6 +1381,7 @@ const ACTIONS = {
   advance: (id) => openAdvanceForm(id),
   "add-discount": (id) => openDiscountForm(id),
   "del-discount": (id) => deleteDiscount(id),
+  "edit-discount": (id) => { const d = data.discounts.find((x) => x.id === id); if (d) openDiscountForm(d.colleague_id, d); },
   "undo-payment": (id) => undoPayment(id),
   "wa-payment": (id) => { const p = data.payments.find((x) => x.id === id); if (p) sendWhatsapp(colleagueById(p.colleague_id), paymentMessage(p)); },
   calendar: (id) => openCalendarDialog(id),
