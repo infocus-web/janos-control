@@ -100,7 +100,7 @@ Tengan en cuenta que el salón que elijamos puede cancelarse si surge un evento 
 
 Fuera de Jano's hay lugares dedicados para hacer fotos, como Equiland o Lagos del Rocío, que tienen un costo aparte (no incluido en el servicio) y que tendrían que contratar ustedes directamente.
 
-El lugar de la sesión debe estar dentro de un rango de 40 kilómetros del salón donde va a ser la fiesta ({salon}). Si eligen un lugar más alejado, va a tener un costo extra de logística (combustible).
+Ustedes tienen bonificados 40 km de traslado (20 km de ida y 20 km de vuelta) desde el salón donde va a ser la fiesta ({salon}). Si eligen un lugar más alejado, va a tener un costo extra de logística (combustible).
 
 Cuéntenme qué días tienen disponibles de lunes a jueves así coordinamos fecha y reservamos el lugar. Cualquier duda, me escriben por acá. ¡Un abrazo!`;
 
@@ -711,7 +711,7 @@ function whatsappMessage(client){const template=whatsappTemplateForType(client.t
 // guardadas en state.settings.speechTemplates. Editables en Configuración,
 // con el mismo patrón de "Restaurar mensaje original" que los de arriba.
 function speechTemplates(){const map=state.settings?.speechTemplates;return (map&&typeof map==="object")?map:{};}
-function speechTemplateFor(key){const def=SPEECH_TYPES.find(s=>s.key===key)?.default||"";return (speechTemplates()[key]||def).replace(/(?:Dylan|\{remitente\}) elige la música porque[^\n]*/g,"Generalmente nosotros elegimos la música porque por experiencia sabemos cuál se ajusta mejor al video, pero si quieren algo puntual, pueden consultarnos.").replace("Quedan sujetos a disponibilidad (y a cancelaciones si surge un evento ese día), así que tenemos que coordinar una fecha en la que coincidamos nosotros, ustedes, y que el lugar esté libre.","Quedan sujetos a disponibilidad, así que tenemos que coordinar una fecha en la que coincidamos nosotros, ustedes, y que el lugar esté libre.\n\nTengan en cuenta que el salón que elijamos puede cancelarse si surge un evento ese día: estamos en temporada de eventos empresariales y escolares, y durante la semana se hacen muchos eventos corporativos. Si pasa, no se preocupen: hacemos la sesión en otro salón cercano.");}
+function speechTemplateFor(key){const def=SPEECH_TYPES.find(s=>s.key===key)?.default||"";return (speechTemplates()[key]||def).replace(/(?:Dylan|\{remitente\}) elige la música porque[^\n]*/g,"Generalmente nosotros elegimos la música porque por experiencia sabemos cuál se ajusta mejor al video, pero si quieren algo puntual, pueden consultarnos.").replace(/El lugar de la sesión debe estar dentro de un rango de 40 kilómetros (?:\(20 km de ida y 20 km de vuelta\) )?del salón donde va a ser la fiesta/,"Ustedes tienen bonificados 40 km de traslado (20 km de ida y 20 km de vuelta) desde el salón donde va a ser la fiesta").replace("Quedan sujetos a disponibilidad (y a cancelaciones si surge un evento ese día), así que tenemos que coordinar una fecha en la que coincidamos nosotros, ustedes, y que el lugar esté libre.","Quedan sujetos a disponibilidad, así que tenemos que coordinar una fecha en la que coincidamos nosotros, ustedes, y que el lugar esté libre.\n\nTengan en cuenta que el salón que elijamos puede cancelarse si surge un evento ese día: estamos en temporada de eventos empresariales y escolares, y durante la semana se hacen muchos eventos corporativos. Si pasa, no se preocupen: hacemos la sesión en otro salón cercano.");}
 function speechMessage(client,key){return fillTemplate(speechTemplateFor(key),messagePlaceholderValues(client));}
 function saveSpeechTemplates(){const updated={};SPEECH_TYPES.forEach(s=>{const value=document.querySelector(`[data-speech-template="${CSS.escape(s.key)}"]`)?.value.trim()||"";updated[s.key]=value||s.default;});state.settings={...(state.settings||{}),speechTemplates:updated};saveState();renderSettings();toast("Mensajes de grupo guardados");}
 // Copia el speech al portapapeles y abre el grupo de WhatsApp guardado en
@@ -1843,7 +1843,7 @@ function closeGlobalSearch() {
   document.getElementById("globalSearch").value = "";
 }
 
-function setView(view){activeView=view;document.querySelectorAll(".view").forEach(v=>v.classList.toggle("active",v.id===`${view}View`));document.querySelectorAll(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.view===view));const meta={dashboard:["Resumen operativo","Inicio"],clients:["Gestión de eventos","Clientes"],calendar:["Vista mensual","Calendario"],tasks:["Pendientes por rol","Tareas"],renditions:["Trabajos realizados","Rendiciones"],settings:["Reglas y valores","Configuración"],users:["Administración","Usuarios"],colleagues:["Equipo y pagos","Colegas"]}[view];document.getElementById("viewEyebrow").textContent=meta[0];document.getElementById("viewTitle").textContent=meta[1];document.getElementById("newClientBtn").classList.toggle("hidden",view==="users"||view==="tasks"||view==="renditions"||view==="colleagues");
+function setView(view){activeView=view;document.querySelectorAll(".view").forEach(v=>v.classList.toggle("active",v.id===`${view}View`));document.querySelectorAll(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.view===view));const meta={dashboard:["Resumen operativo","Inicio"],clients:["Gestión de eventos","Clientes"],calendar:["Vista mensual","Calendario"],tasks:["Pendientes por rol","Tareas"],renditions:["Trabajos realizados","Rendiciones"],settings:["Reglas y valores","Configuración"],users:["Administración","Usuarios"],colleagues:["Equipo y pagos","Personal"]}[view];document.getElementById("viewEyebrow").textContent=meta[0];document.getElementById("viewTitle").textContent=meta[1];document.getElementById("newClientBtn").classList.toggle("hidden",view==="users"||view==="tasks"||view==="renditions"||view==="colleagues");
 const manualBtn=document.getElementById("manualRenditionBtn");if(manualBtn)manualBtn.style.display=view==="renditions"?"":"none";document.querySelector(".sidebar").classList.remove("open");
 if(view==="calendar"&&!gcalLoading)fetchGcalEvents(calendarMonth);}
 function toast(msg,duration=2600){const el=document.getElementById("toast");const openDialog=document.querySelector("dialog[open]");(openDialog||document.body).appendChild(el);el.textContent=msg;el.classList.add("show");clearTimeout(toast.timer);toast.timer=setTimeout(()=>el.classList.remove("show"),duration);}
@@ -2299,5 +2299,9 @@ initColleagues({
   escapeHtml,money,dateText,toast,whatsappNumber,openWhatsappApp,driveAutoAvailable,
   openClientDetail,
   refreshClientDetail:(id)=>openClientDetail(id),
+  // Confirmar una tarea que una colega marcó como hecha desde su portal.
+  updateTask,
+  // Tarifa vigente a una fecha (para el personal que cobra un % de la cobertura).
+  getRate,
 });
 bootstrap();
