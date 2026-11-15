@@ -275,6 +275,7 @@ export function renderColleagues() {
       </div>
       <div class="col-toolbar-actions">
         ${inactiveCount ? `<label class="col-toggle"><input type="checkbox" data-col-toggle-inactive ${showInactive ? "checked" : ""}> Ver inactivos (${inactiveCount})</label>` : ""}
+        <button class="secondary-btn" data-col="split" ${totalOwed > 0 ? "" : "disabled title=\"No le debés nada a nadie\""}>💸 Repartir un cobro</button>
         <button class="primary-btn" data-col="new-colleague">+ Agregar colega</button>
       </div>
     </div>
@@ -1260,6 +1261,88 @@ function openColleagueDetail(id) {
   </div>`);
 }
 
+// ── repartir un cobro ─────────────────────────────────────────────────────
+// Lo que cobró Pablo de la empresa se reparte entre su personal en proporción
+// a lo que le debe a cada uno (a todos el mismo %). Se registra como "Pago a
+// cuenta" de cada persona (se resta de «Le debés»).
+function splitPeople() {
+  return data.colleagues.filter((c) => c.active && inTeam(c)).map((c) => ({ c, owed: summary(c).net })).filter((x) => x.owed > 0).sort((a, b) => b.owed - a.owed);
+}
+// Reparto en pesos enteros; lo que sobra del redondeo va a quienes tienen más decimales.
+function splitShares(people, received) {
+  const total = people.reduce((t, x) => t + x.owed, 0);
+  if (!(received > 0) || !total) return people.map(() => 0);
+  if (received >= total) return people.map((x) => x.owed);
+  const raw = people.map((x) => (x.owed * received) / total);
+  const shares = raw.map(Math.floor);
+  let rest = Math.round(received - shares.reduce((t, v) => t + v, 0));
+  raw.map((v, i) => [v - Math.floor(v), i]).sort((a, b) => b[0] - a[0]).forEach(([, i]) => { if (rest > 0 && shares[i] < people[i].owed) { shares[i] += 1; rest -= 1; } });
+  return shares;
+}
+function openSplitForm() {
+  const people = splitPeople(), team = currentPanel();
+  if (!people.length) { toast("No le debés nada a nadie del equipo."); return; }
+  const total = num(people.reduce((t, x) => t + x.owed, 0));
+  showDialog("colFormDialog", `<form id="colSplitForm" data-total="${total}">
+    ${head(teamLabel(team), "Repartir un cobro", "colFormDialog")}
+    <p class="col-help">Poné lo que te pagó la empresa: se reparte entre tu personal en proporción a lo que le debés a cada uno (a todos el mismo porcentaje). Queda registrado como <b>«Pago a cuenta»</b> de cada persona y se resta de «Le debés».</p>
+    <div class="form-grid">
+      <label>¿Cuánto cobraste?<input name="received" type="number" min="1" step="1" inputmode="numeric" required placeholder="Ej. 1000000"></label>
+      <label>Fecha del pago<input name="paid_on" type="date" value="${today()}" required></label>
+    </div>
+    <label class="full-label">Nota (opcional)<input name="notes" maxlength="140" value="Reparto de cobro de la empresa"></label>
+    <p class="col-label">Le toca a cada uno <small>(podés cambiar los montos a mano)</small></p>
+    <div class="col-split-list">${people.map((x) => `<div class="col-split-row"><span class="col-split-name">${esc(x.c.name)}<small>le debés ${money(x.owed)}</small></span><b data-split-pct="${x.c.id}">0%</b><input type="number" min="0" max="${x.owed}" step="1" inputmode="numeric" name="share" data-split-id="${x.c.id}" data-owed="${x.owed}" value="0" aria-label="Lo que le toca a ${esc(x.c.name)}"></div>`).join("")}</div>
+    <div class="col-pay-total"><div><span>Les debés en total</span><strong>${money(total)}</strong></div><div><span>Se cubre</span><strong data-split="pct">0%</strong></div><div class="col-pay-net"><span>Repartido</span><strong data-split="sum">${money(0)}</strong></div></div>
+    <p class="col-warn hidden" data-split="error"></p>
+    <div class="modal-actions">
+      <button class="secondary-btn" type="button" data-col="close" data-id="colFormDialog">Cancelar</button>
+      <button class="primary-btn" type="submit">Registrar los pagos</button>
+    </div>
+  </form>`);
+}
+function splitValues(form) {
+  const received = num(form.elements.received.value), total = Number(form.dataset.total);
+  const rows = [...form.querySelectorAll("[data-split-id]")].map((el) => ({ id: el.dataset.splitId, owed: Number(el.dataset.owed), amount: num(el.value) }));
+  const sum = num(rows.reduce((t, r) => t + r.amount, 0));
+  let error = "";
+  if (!(received > 0)) error = "Poné cuánto cobraste.";
+  else if (rows.some((r) => r.amount < 0)) error = "Ningún monto puede ser negativo.";
+  else if (rows.some((r) => r.amount > r.owed)) error = "A alguien le estás dando más de lo que le debés.";
+  else if (sum > received) error = `Repartiste ${money(sum)} y cobraste ${money(received)}: sobran ${money(num(sum - received))}.`;
+  else if (!sum) error = "No hay nada para repartir.";
+  return { received, total, rows, sum, error };
+}
+function updateSplitForm(form, recalc) {
+  if (recalc) {
+    const inputs = [...form.querySelectorAll("[data-split-id]")];
+    const shares = splitShares(inputs.map((el) => ({ owed: Number(el.dataset.owed) })), num(form.elements.received.value));
+    inputs.forEach((el, i) => { el.value = shares[i]; });
+  }
+  const v = splitValues(form);
+  v.rows.forEach((r) => { const b = form.querySelector(`[data-split-pct="${r.id}"]`); if (b) b.textContent = `${r.owed ? Math.round((r.amount / r.owed) * 100) : 0}%`; });
+  form.querySelector("[data-split=sum]").textContent = money(v.sum);
+  form.querySelector("[data-split=pct]").textContent = `${v.total ? Math.round((v.sum / v.total) * 100) : 0}%`;
+  const extra = v.received > v.total ? ` Te sobran ${money(num(v.received - v.total))}: con eso les pagás todo lo que les debés.` : "";
+  const err = form.querySelector("[data-split=error]");
+  const msg = v.error && v.received > 0 ? v.error : extra.trim();
+  err.textContent = msg; err.classList.toggle("hidden", !msg);
+}
+async function saveSplitForm(form) {
+  const v = splitValues(form);
+  if (v.error) { toast(v.error); return; }
+  const rows = v.rows.filter((r) => r.amount > 0);
+  const paidOn = form.elements.paid_on.value || today(), notes = String(form.elements.notes.value || "").trim() || null;
+  if (!confirm(`¿Registrar ${rows.length} ${rows.length === 1 ? "pago" : "pagos"} a cuenta por ${money(v.sum)} en total?`)) return;
+  await withBusy(form, async () => {
+    // Un solo insert: se guardan todos o ninguno.
+    await run(supabase.from("colleague_payments").insert(rows.map((r) => ({ colleague_id: r.id, kind: "advance", gross: 0, discounts: 0, net: r.amount, paid_on: paidOn, notes }))).select());
+    closeDialog("colFormDialog");
+    await loadColleagues();
+    toast(`Reparto registrado: ${money(v.sum)} entre ${rows.length} ${rows.length === 1 ? "persona" : "personas"}. El detalle a cada una se lo mandás con 💬 desde su ficha.`, 7000);
+  });
+}
+
 // ── deuda anterior (sin evento) ───────────────────────────────────────────
 function openDebtForm(colleagueId) {
   const c = colleagueById(colleagueId); if (!c) return;
@@ -1562,6 +1645,7 @@ const ACTIONS = {
   advance: (id) => openAdvanceForm(id),
   "add-discount": (id) => openDiscountForm(id),
   "add-debt": (id) => openDebtForm(id),
+  split: () => openSplitForm(),
   "del-debt": (id) => deleteDebt(id),
   "del-discount": (id) => deleteDiscount(id),
   "edit-discount": (id) => { const d = data.discounts.find((x) => x.id === id); if (d) openDiscountForm(d.colleague_id, d); },
@@ -1639,6 +1723,7 @@ export function initColleagues(dependencies) {
     if (form?.id === "colPaymentForm" && e.target.name === "advance") e.target.setAttribute("data-auto", "0");
     if (form?.id === "colPaymentForm") updatePaymentTotals(form);
     if (form?.id === "colDiscountForm") updateDiscountHelp(form);
+    if (form?.id === "colSplitForm") updateSplitForm(form, e.target.name === "received");
     if (form?.id === "colCoverageForm" && e.target.name === "amount") e.target.dataset.auto = "0";
     if (form?.id === "colCoverageForm" && e.target.name === "arrival_time") e.target.dataset.auto = "0";
     if (form?.id === "colCoverageForm" && e.target.name === "event_time") {
@@ -1647,7 +1732,7 @@ export function initColleagues(dependencies) {
     }
   });
   document.addEventListener("submit", (e) => {
-    const handlers = { colAdvanceForm: saveAdvanceForm, colExternalForm: saveExternalForm, colColleagueForm: saveColleagueForm, colCoverageForm: saveCoverageForm, colDiscountForm: saveDiscountForm, colDebtForm: saveDebtForm, colPaymentForm: savePaymentForm };
+    const handlers = { colAdvanceForm: saveAdvanceForm, colExternalForm: saveExternalForm, colColleagueForm: saveColleagueForm, colCoverageForm: saveCoverageForm, colDiscountForm: saveDiscountForm, colDebtForm: saveDebtForm, colSplitForm: saveSplitForm, colPaymentForm: savePaymentForm };
     const handler = handlers[e.target.id];
     if (!handler) return;
     e.preventDefault();
