@@ -494,7 +494,7 @@ function distributorHtml() {
     const middle = kind === "session"
       ? `<div class="col-assign-time col-assign-src">${it.source === "gcal" ? `<span class="col-chip ok" title="Leída de Google Calendar">📅 Calendario</span>` : `<span class="col-chip" title="Cargada en la ficha del cliente, no la encontré en Google Calendar">Ficha</span>`}</div>`
       : `<label class="col-assign-time"><span>Inicio</span><input type="time" data-col-event-time="${c.id}" value="${esc(eventTimeOf(c.id))}" aria-label="Hora de inicio de ${esc(c.honoree || "el evento")}"></label>`;
-    return `<div class="col-assign-row ${cv ? "" : "free"}">
+    return `<div class="col-assign-row ${cv ? "assigned" : "free"}">
       <div class="col-assign-date"><strong>${esc(it.date.slice(8, 10))}/${esc(it.date.slice(5, 7))}</strong><span>${esc(new Intl.DateTimeFormat("es-AR", { weekday: "short" }).format(new Date(`${it.date}T12:00:00`)))}</span></div>
       <div class="col-assign-ev"><button class="col-link" data-col="open-event" data-id="${c.id}">${kind === "session" ? "📷 Book · " : ""}${esc(c.honoree || "Evento")}</button><small>${esc(sub.filter(Boolean).join(" · "))}</small></div>
       ${middle}
