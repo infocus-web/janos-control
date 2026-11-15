@@ -1,5 +1,5 @@
 import { approveMassDeletion, checkDriveFolderExists, clearDriveAccount, clearMyZohoAccount, cloudEnabled, supabase, supabaseUrl, connectDriveAccount, createDriveFolderNow, deleteUser, getAccessProfile, getLatestUpdateAt, getMyDriveAccounts, getSession, listUserProfiles, loadCloudState, notifyAdmin, notifyUserApproved, requestEmailCode, requestPasswordReset, saveDriveRootFolder, saveMyZohoAccount, sendDriveEmailNow, setUserStatus, signIn, signOut, signUp, syncCloudState, updatePassword, verifyEmailCode, verifyMyZohoAccount } from "./cloud.js";
-import { colleaguesPanelHtml, initColleagues, loadColleagues, renderColleagues, resetColleagues, shareDriveForClient } from "./colegas.js";
+import { assignedNamesForClient, colleaguesPanelHtml, initColleagues, loadColleagues, renderColleagues, resetColleagues, shareDriveForClient } from "./colegas.js";
 
 const PRODUCTION_HOST = "janos-control.vercel.app";
 if(window.location.hostname.endsWith(".vercel.app")&&window.location.hostname!==PRODUCTION_HOST){
@@ -647,7 +647,7 @@ function renderCalendar(){
     const items=(eventsByDay.get(day)||[]).sort((a,b)=>String(a.salon||"").localeCompare(String(b.salon||"")));
     const gcalItems=(gcalByDay.get(day)||[]);
     const gcalHtml=gcalItems.map(e=>`<div class="cal-gcal-event" title="${escapeHtml(e.title)}${e.time?' · '+e.time:''}${e.location?' · '+e.location:''}">📅 ${escapeHtml(e.title)}${e.time?` <span class="cal-gcal-time">${e.time}</span>`:''}</div>`).join("");
-    cells.push(`<div class="cal-cell${dateKey===todayKey?" today":""}"><span class="cal-day">${day}</span>${items.map(c=>`<button class="cal-event ${calendarSalonClass(c.salon,salons)}" data-open-client="${c.id}" title="${escapeHtml(c.honoree)} · ${escapeHtml(c.salon||"")}">${escapeHtml(c.honoree)}</button>`).join("")}${gcalHtml}</div>`);
+    cells.push(`<div class="cal-cell${dateKey===todayKey?" today":""}"><span class="cal-day">${day}</span>${items.map(c=>{const who=assignedNamesForClient(c.id);return `<button class="cal-event ${calendarSalonClass(c.salon,salons)}" data-open-client="${c.id}" title="${escapeHtml(c.honoree)} · ${escapeHtml(c.salon||"")} · ${who.length?escapeHtml("Asignado: "+who.join(", ")):"Sin asignar"}">${escapeHtml(c.honoree)}<span class="cal-event-who${who.length?"":" none"}">${who.length?escapeHtml(who.join(", ")):"Sin asignar"}</span></button>`;}).join("")}${gcalHtml}</div>`);
   }
   const trailing=(7-(cells.length%7))%7;
   for(let i=0;i<trailing;i++)cells.push(`<div class="cal-cell empty"></div>`);
@@ -2303,5 +2303,6 @@ initColleagues({
   updateTask,
   // Tarifa vigente a una fecha (para el personal que cobra un % de la cobertura).
   getRate,
+  renderCalendar,
 });
 bootstrap();

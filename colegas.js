@@ -188,10 +188,18 @@ export async function loadColleagues() {
   }
   refreshAll();
 }
+// Para el calendario de app.js: quién está asignado a cubrir el evento (no sesiones).
+export function assignedNamesForClient(clientId) {
+  return data.coverages
+    .filter((cv) => cv.client_id === clientId && !isSession(cv))
+    .map((cv) => colleagueById(cv.colleague_id)?.name)
+    .filter(Boolean);
+}
 export function resetColleagues() { data = emptyData(); status = "idle"; openColleagueId = null; closeDialog("colDetailDialog"); closeDialog("colFormDialog"); }
 
 function refreshAll(clientId) {
   renderColleagues();
+  deps.renderCalendar?.();
   if (openColleagueId && document.getElementById("colDetailDialog")?.open) openColleagueDetail(openColleagueId);
   const detail = document.getElementById("detailDialog");
   if (detail?.open) {
