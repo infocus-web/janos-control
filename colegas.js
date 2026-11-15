@@ -31,7 +31,15 @@ const TEAM_KEY = "janos_colegas_team";
 let teamFilter = (() => { try { return localStorage.getItem(TEAM_KEY) || ""; } catch { return ""; } })();
 function teamOf(c) { return String(c?.team || "Pablo"); }
 function allTeams() { return [...new Set([...DEFAULT_TEAMS, ...data.colleagues.map(teamOf)])]; }
-function inTeam(c) { return !teamFilter || teamOf(c) === teamFilter; }
+// Cada jefe (Pablo / Dylan / Gustavo) tiene su panel: ve su personal y los
+// externos que asignó él (coberturas con cv.team de su equipo).
+function panelTeams() { return [...new Set([...DEFAULT_TEAMS, ...data.colleagues.map(teamOf).filter((t) => t !== EXTERNAL_TEAM)])]; }
+function currentPanel() { return panelTeams().includes(teamFilter) ? teamFilter : "Pablo"; }
+function inTeam(c) {
+  const team = currentPanel();
+  if (teamOf(c) === team) return true;
+  return isExternal(c) && data.coverages.some((cv) => cv.colleague_id === c.id && (cv.team || "Pablo") === team);
+}
 // Modo de la vista: "team" (personal y pagos) | "assign" (repartir eventos).
 const MODE_KEY = "janos_colegas_mode";
 let colMode = (() => { try { return localStorage.getItem(MODE_KEY) === "assign" ? "assign" : "team"; } catch { return "team"; } })();
@@ -174,14 +182,31 @@ function refreshAll(clientId) {
 }
 
 // ── vista "Colegas" ───────────────────────────────────────────────────────
+// El selector vive en el encabezado de la app (junto a #viewTitle); el CSS lo
+// muestra solo cuando la vista Colegas está activa.
+function headerPicker(html) {
+  let el = document.getElementById("colHeaderPick");
+  if (!el) {
+    const titleBlock = document.getElementById("viewTitle")?.parentElement;
+    if (!titleBlock) return;
+    el = document.createElement("div");
+    el.id = "colHeaderPick";
+    el.className = "col-header-pick";
+    el.setAttribute("role", "group");
+    el.setAttribute("aria-label", "Panel de");
+    titleBlock.after(el);
+  }
+  el.innerHTML = html;
+}
 export function renderColleagues() {
   const root = document.getElementById("colleaguesView");
   if (!root || !deps) return;
   if (!cloudEnabled || !deps.isSignedIn()) { root.innerHTML = `<div class="panel"><div class="empty"><strong>Colegas</strong>Iniciá sesión para llevar el control de tu equipo.</div></div>`; return; }
+  if (status !== "ready") headerPicker("");
   if (status === "loading" || status === "idle") { root.innerHTML = `<div class="panel"><div class="empty">Cargando colegas…</div></div>`; return; }
   if (status === "error") { root.innerHTML = `<div class="panel"><div class="empty"><strong>No se pudieron cargar los colegas</strong>${esc(loadError)}<br><br><button class="secondary-btn" data-col="reload">Reintentar</button></div></div>`; return; }
 
-  if (teamFilter && !allTeams().includes(teamFilter)) teamFilter = "";
+  teamFilter = currentPanel();
   const teamColleagues = data.colleagues.filter(inTeam);
   const teamIds = new Set(teamColleagues.map((c) => c.id));
   const list = teamColleagues.filter((c) => showInactive || c.active);
@@ -190,19 +215,21 @@ export function renderColleagues() {
   const upcomingCount = data.coverages.filter((cv) => teamIds.has(cv.colleague_id) && coverageDate(cv) >= today()).length;
   const discountLeft = num(sums.reduce((s, x) => s + x.discountLeft, 0));
   const inactiveCount = teamColleagues.filter((c) => !c.active).length;
-  const teamTabs = `<div class="view-switch col-teams" aria-label="Equipo">${["", ...allTeams()].map((t) => `<button class="${teamFilter === t ? "active" : ""}" aria-pressed="${teamFilter === t}" data-col="team" data-id="${esc(t)}">${t ? esc(teamLabel(t)) : "Todos"} <b>${data.colleagues.filter((c) => c.active && (!t || teamOf(c) === t)).length}</b></button>`).join("")}</div>`;
+  // Selector "Panel de" en el encabezado, al lado del título "Colegas".
+  headerPicker(`<span>Panel de</span>${panelTeams().map((t) => `<button class="col-panel-btn ${teamFilter === t ? "active" : ""}" aria-pressed="${teamFilter === t}" data-col="team" data-id="${esc(t)}"><i aria-hidden="true">${esc(t.charAt(0).toUpperCase())}</i>${esc(t)}</button>`).join("")}`);
+  const teamTabs = "";
 
   const modeTabs = `<div class="view-switch col-modes" aria-label="Sección">
     <button class="${colMode === "team" ? "active" : ""}" aria-pressed="${colMode === "team"}" data-col="mode" data-id="team">👥 Personal y pagos</button>
     <button class="${colMode === "assign" ? "active" : ""}" aria-pressed="${colMode === "assign"}" data-col="mode" data-id="assign">📋 Repartir eventos</button>
   </div>`;
-  if (colMode === "assign") { root.innerHTML = `${modeTabs}${teamTabs}${distributorHtml()}`; return; }
+  if (colMode === "assign") { root.innerHTML = `${teamTabs}${modeTabs}${distributorHtml()}`; return; }
   root.innerHTML = `
-    ${modeTabs}
     ${teamTabs}
+    ${modeTabs}
     <div class="col-toolbar">
       <div class="col-stats">
-        <div class="col-stat col-stat-gold"><span>${teamFilter ? `Equipo ${esc(teamFilter)} · les debe` : "Les debés en total"}</span><strong>${money(totalOwed)}</strong><small>eventos ya realizados, con cuotas descontadas</small></div>
+        <div class="col-stat col-stat-gold"><span>${esc(teamFilter)} les debe</span><strong>${money(totalOwed)}</strong><small>eventos ya realizados, con cuotas descontadas</small></div>
         <div class="col-stat"><span>Coberturas próximas</span><strong>${upcomingCount}</strong><small>de hoy en adelante</small></div>
         <div class="col-stat"><span>Descuentos por cobrar</span><strong>${money(discountLeft)}</strong><small>equipos u otros adelantos</small></div>
       </div>
@@ -211,8 +238,8 @@ export function renderColleagues() {
         <button class="primary-btn" data-col="new-colleague">+ Agregar colega</button>
       </div>
     </div>
-    ${list.length || !teamFilter ? "" : `<div class="panel"><div class="empty"><strong>El equipo ${esc(teamFilter)} todavía no tiene colegas</strong>Agregá a su personal con «+ Agregar colega».</div></div>`}
-    ${!list.length && teamFilter ? "" : list.length ? `<div class="col-grid">${list.map(cardHtml).join("")}</div>` : `<div class="panel"><div class="empty"><strong>Todavía no cargaste colegas</strong>Agregá a las personas que cubren tus eventos con su tarifa, WhatsApp y Gmail.<br><br><button class="primary-btn" data-col="new-colleague">+ Agregar el primero</button></div></div>`}`;
+    ${list.length ? "" : `<div class="panel"><div class="empty"><strong>${esc(teamFilter)} todavía no tiene personal cargado</strong>Agregalo con «+ Agregar colega».</div></div>`}
+    ${!list.length ? "" : list.length ? `<div class="col-grid">${list.map(cardHtml).join("")}</div>` : `<div class="panel"><div class="empty"><strong>Todavía no cargaste colegas</strong>Agregá a las personas que cubren tus eventos con su tarifa, WhatsApp y Gmail.<br><br><button class="primary-btn" data-col="new-colleague">+ Agregar el primero</button></div></div>`}`;
 }
 
 function cardHtml(c) {
@@ -271,7 +298,7 @@ async function onEventTimeInput(input) {
 // ── repartir eventos: un selector por evento para elegir quién lo cubre ──
 // Cada equipo reparte lo suyo: el selector muestra solo su personal y la
 // cobertura del evento de ese equipo (si ya hay una, la cambia o la quita).
-function assignTeam() { return teamFilter && teamFilter !== EXTERNAL_TEAM ? teamFilter : "Pablo"; }
+function assignTeam() { return currentPanel(); }
 function teamCoverages(clientId, team, kind = "event") {
   return data.coverages.filter((cv) => {
     if (cv.client_id !== clientId || (cv.kind || "event") !== kind) return false;
@@ -418,7 +445,7 @@ function distributorHtml() {
   return `<div class="col-assign">
     ${kindTabs}
     <div class="col-assign-top">
-      ${kind === "event" ? `<p class="col-help">Repartiendo los eventos del <b>${esc(teamLabel(team))}</b>${teamFilter && teamFilter !== EXTERNAL_TEAM ? "" : " (elegí otro equipo arriba para repartir su personal)"}. Cargá la hora de <b>Inicio</b> de cada evento: el personal queda citado ${ARRIVAL_BEFORE_MIN} minutos antes. Al elegir a alguien se le asigna con su tarifa; las indicaciones las completás en la ficha del evento.</p>` : `<p class="col-help">Repartiendo las sesiones de fotos del <b>${esc(teamLabel(team))}</b>. Al elegir a alguien se le asigna con la fecha, hora y lugar de la sesión.</p>${gcalNote}`}
+      ${kind === "event" ? `<p class="col-help">Repartiendo los eventos del <b>${esc(teamLabel(team))}</b>. Cargá la hora de <b>Inicio</b> de cada evento: el personal queda citado ${ARRIVAL_BEFORE_MIN} minutos antes. Al elegir a alguien se le asigna con su tarifa; las indicaciones las completás en la ficha del evento.</p>` : `<p class="col-help">Repartiendo las sesiones de fotos del <b>${esc(teamLabel(team))}</b>. Al elegir a alguien se le asigna con la fecha, hora y lugar de la sesión.</p>${gcalNote}`}
       <div class="toolbar col-assign-filters">
         <select data-col-assign-filter="month" aria-label="Mes"><option value="">Todos los meses</option>${months.map((m) => `<option value="${m}" ${assignMonth === m ? "selected" : ""}>${esc(monthName(m))}</option>`).join("")}</select>
         <select data-col-assign-filter="salon" aria-label="Salón"><option value="">Todos los salones</option>${salons.map((x) => `<option value="${esc(x)}" ${assignSalon === x ? "selected" : ""}>${esc(x)}</option>`).join("")}</select>
@@ -661,7 +688,7 @@ function salonOptions(selected = []) {
 
 // Alta / edición de colega
 function openColleagueForm(colleague) {
-  const c = colleague || { name: "", role: "", phone: "", email: "", default_fee: 0, notes: "", active: true, team: teamFilter || "Pablo" };
+  const c = colleague || { name: "", role: "", phone: "", email: "", default_fee: 0, notes: "", active: true, team: currentPanel() };
   showDialog("colFormDialog", `<form id="colColleagueForm" data-id="${c.id || ""}">
     ${head("Equipo", c.id ? `Editar ${c.name}` : "Nuevo colega", "colFormDialog")}
     <div class="form-grid">
@@ -1272,7 +1299,7 @@ const ACTIONS = {
   "gcal-reload": () => loadGcalSessions(),
   "session-sync": (id) => syncSessionCoverage(id),
   mode: (m) => { colMode = m === "assign" ? "assign" : "team"; try { localStorage.setItem(MODE_KEY, colMode); } catch {} renderColleagues(); },
-  team: (t) => { teamFilter = t || ""; try { localStorage.setItem(TEAM_KEY, teamFilter); } catch {} renderColleagues(); },
+  team: (t) => { teamFilter = t || "Pablo"; try { localStorage.setItem(TEAM_KEY, teamFilter); } catch {} renderColleagues(); },
   "notify-wa": (id) => { const c = colleagueById(id); if (c && pendingWa[id]) { sendWhatsapp(c, pendingWa[id]); delete pendingWa[id]; } },
   "assign-session": (clientId) => { if (status !== "ready") { toast("Esperá que terminen de cargar los colegas."); return; } openCoverageForm(clientId, null, "session"); },
   "mark-confirm": (taskId) => confirmMark(taskId),

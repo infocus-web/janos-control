@@ -826,3 +826,15 @@ button.col-chip:hover { filter: brightness(1.15); }
 .col-unmatched { font-size: 12.5px; color: var(--muted); }
 .col-unmatched summary { cursor: pointer; color: var(--amber); }
 .col-unmatched ul { margin: 6px 0; padding-left: 18px; }
+
+/* Colegas: selector de panel (Pablo / Dylan / Gustavo) en el encabezado */
+.col-header-pick { display: none; align-items: center; gap: 8px; flex-wrap: wrap; margin-left: 18px; }
+.main-content:has(#colleaguesView.active) .col-header-pick { display: flex; }
+.col-header-pick > span { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .1em; font-weight: 700; }
+.col-panel-btn { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px 6px 6px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--surface-2); color: var(--ink-2); font: inherit; font-weight: 700; font-size: 14px; cursor: pointer; min-height: 40px; transition: border-color .15s, background .15s; }
+.col-panel-btn i { font-style: normal; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-3); color: var(--ink); font-size: 13px; }
+.col-panel-btn:hover { border-color: var(--gold-border); }
+.col-panel-btn.active { color: var(--gold); border-color: var(--gold); background: var(--gold-soft); }
+.col-panel-btn.active i { background: linear-gradient(135deg, var(--gold), #a87830); color: #1a1000; }
+.col-panel-btn:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+@media (max-width: 900px) { .col-header-pick { margin-left: 0; } .col-header-pick > span { display: none; } }
