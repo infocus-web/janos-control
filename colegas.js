@@ -35,6 +35,14 @@ function dateLong(iso) {
   const s = new Intl.DateTimeFormat("es-AR", { weekday: "long", day: "numeric", month: "long" }).format(new Date(`${iso}T12:00:00`));
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
+// Usa el toast de app.js, pero lo deja dentro del diálogo que está más
+// arriba (si no, quedaría tapado por el formulario de colegas).
+function toast(msg, duration) {
+  deps.toast(msg, duration);
+  const t = document.getElementById("toast");
+  const top = [...document.querySelectorAll("dialog[open]")].at(-1);
+  if (t && top && t.parentElement !== top) top.appendChild(t);
+}
 function firstName(name) { return String(name || "").trim().split(/\s+/)[0] || ""; }
 function clientById(id) { return deps.getClients().find((c) => c.id === id) || null; }
 function colleagueById(id) { return data.colleagues.find((c) => c.id === id) || null; }
@@ -232,7 +240,17 @@ function ensureDialogs() {
     document.body.appendChild(d);
   }
 }
-function showDialog(id, html) { ensureDialogs(); const d = document.getElementById(id); d.innerHTML = html; if (!d.open) d.showModal(); return d; }
+function showDialog(id, html) {
+  ensureDialogs();
+  const d = document.getElementById(id);
+  // toast() de app.js mete el aviso dentro del diálogo abierto: lo saco antes
+  // de reemplazar el contenido para no borrarlo.
+  const t = document.getElementById("toast");
+  if (t && d.contains(t)) document.body.appendChild(t);
+  d.innerHTML = html;
+  if (!d.open) d.showModal();
+  return d;
+}
 function closeDialog(id) { const d = document.getElementById(id); if (d?.open) d.close(); }
 function head(eyebrow, title, closeId) { return `<div class="modal-head"><div><p class="eyebrow">${esc(eyebrow)}</p><h2>${esc(title)}</h2></div><button class="icon-btn" type="button" data-col="close" data-id="${closeId}" aria-label="Cerrar">×</button></div>`; }
 
@@ -262,7 +280,7 @@ function openColleagueForm(colleague) {
 async function saveColleagueForm(form) {
   const f = new FormData(form);
   const email = String(f.get("email") || "").trim().toLowerCase();
-  if (email && !validEmail(email)) { deps.toast("Revisá el Gmail: no parece un mail válido."); return; }
+  if (email && !validEmail(email)) { toast("Revisá el Gmail: no parece un mail válido."); return; }
   const row = {
     name: String(f.get("name") || "").trim(),
     role: String(f.get("role") || "").trim() || null,
@@ -271,7 +289,7 @@ async function saveColleagueForm(form) {
     default_fee: num(f.get("default_fee")),
     notes: String(f.get("notes") || "").trim() || null,
   };
-  if (!row.name) { deps.toast("Poné el nombre del colega."); return; }
+  if (!row.name) { toast("Poné el nombre del colega."); return; }
   const id = form.dataset.id;
   if (id) row.active = f.get("active") === "on";
   await withBusy(form, async () => {
@@ -283,7 +301,7 @@ async function saveColleagueForm(form) {
       data.colleagues = [...data.colleagues, saved].sort((a, b) => a.name.localeCompare(b.name));
     }
     closeDialog("colFormDialog");
-    deps.toast(id ? "Colega actualizado" : "Colega agregado");
+    toast(id ? "Colega actualizado" : "Colega agregado");
     refreshAll();
   });
 }
@@ -295,12 +313,12 @@ async function deleteColleague(id) {
     if (!confirm(`${c.name} tiene coberturas, pagos o descuentos registrados, así que no se puede borrar sin perder el historial.\n\n¿Lo desactivo? (deja de aparecer en la lista y su calendario deja de funcionar)`)) return;
     const [saved] = await run(supabase.from("colleagues").update({ active: false }).eq("id", id).select());
     data.colleagues = data.colleagues.map((x) => (x.id === id ? saved : x));
-    deps.toast("Colega desactivado");
+    toast("Colega desactivado");
   } else {
     if (!confirm(`¿Borrar a ${c.name}?`)) return;
     await run(supabase.from("colleagues").delete().eq("id", id));
     data.colleagues = data.colleagues.filter((x) => x.id !== id);
-    deps.toast("Colega borrado");
+    toast("Colega borrado");
   }
   closeDialog("colFormDialog"); closeDialog("colDetailDialog");
   refreshAll();
@@ -367,7 +385,7 @@ async function saveCoverageForm(form) {
   const client = clientById(clientId);
   const existing = id ? data.coverages.find((x) => x.id === id) : null;
   let colleagueId = existing?.payment_id ? existing.colleague_id : String(f.get("colleague_id") || "");
-  if (!colleagueId) { deps.toast("Elegí un colega de la lista."); return; }
+  if (!colleagueId) { toast("Elegí un colega de la lista."); return; }
   await withBusy(form, async () => {
     if (colleagueId === "__new") {
       const name = String(f.get("new_name") || "").trim();
@@ -403,10 +421,10 @@ async function saveCoverageForm(form) {
     if (existing && existing.colleague_id !== saved.colleague_id && existing.drive_shared_at) await driveRequest("unshare", { coverageId: saved.id, email: existing.drive_shared_email }).catch(() => {});
     // Acceso a Drive: se comparte solo si ya están la carpeta y el Gmail.
     const colleague = colleagueById(saved.colleague_id);
-    if (saved.drive_shared_at && saved.drive_shared_email === colleague?.email) { deps.toast("Cobertura guardada"); return; }
-    if (!client?.driveUrl) { deps.toast("Cobertura guardada. ⚠ Este evento todavía no tiene carpeta de Drive: creala con «Crear carpeta en Drive» y después tocá «Compartir Drive».", 7000); return; }
-    if (!colleague?.email) { deps.toast(`Cobertura guardada. Cargale el Gmail a ${colleague?.name || "este colega"} para compartirle la carpeta de Drive.`, 6000); return; }
-    deps.toast("Cobertura guardada. Compartiendo la carpeta de Drive…");
+    if (saved.drive_shared_at && saved.drive_shared_email === colleague?.email) { toast("Cobertura guardada"); return; }
+    if (!client?.driveUrl) { toast("Cobertura guardada. ⚠ Este evento todavía no tiene carpeta de Drive: creala con «Crear carpeta en Drive» y después tocá «Compartir Drive».", 7000); return; }
+    if (!colleague?.email) { toast(`Cobertura guardada. Cargale el Gmail a ${colleague?.name || "este colega"} para compartirle la carpeta de Drive.`, 6000); return; }
+    toast("Cobertura guardada. Compartiendo la carpeta de Drive…");
     await shareDrive(saved.id, { quiet: false });
   });
 }
@@ -414,12 +432,12 @@ async function saveCoverageForm(form) {
 async function deleteCoverage(id) {
   const cv = data.coverages.find((x) => x.id === id); if (!cv) return;
   const c = colleagueById(cv.colleague_id);
-  if (cv.payment_id) { deps.toast("Esta cobertura ya está incluida en un pago. Para quitarla, primero deshacé el pago desde el detalle del colega.", 6000); return; }
+  if (cv.payment_id) { toast("Esta cobertura ya está incluida en un pago. Para quitarla, primero deshacé el pago desde el detalle del colega.", 6000); return; }
   if (!confirm(`¿Quitar a ${c?.name || "este colega"} de este evento?`)) return;
   if (cv.drive_shared_at) await driveRequest("unshare", { coverageId: id }).catch(() => {});
   await run(supabase.from("colleague_coverages").delete().eq("id", id));
   data.coverages = data.coverages.filter((x) => x.id !== id);
-  deps.toast(cv.drive_shared_at ? "Colega quitado y sin acceso a la carpeta de Drive" : "Colega quitado del evento");
+  toast(cv.drive_shared_at ? "Colega quitado y sin acceso a la carpeta de Drive" : "Colega quitado del evento");
   refreshAll(cv.client_id);
 }
 
@@ -441,18 +459,18 @@ async function shareDrive(coverageId) {
   const cv = data.coverages.find((x) => x.id === coverageId); if (!cv) return;
   const client = clientById(cv.client_id);
   const colleague = colleagueById(cv.colleague_id);
-  if (!client?.driveUrl) { deps.toast("⚠ Este evento todavía no tiene carpeta de Drive. Creala con «Crear carpeta en Drive» en la ficha y después compartila.", 6000); return; }
-  if (!colleague?.email) { deps.toast(`Cargale el Gmail a ${colleague?.name} para poder compartirle la carpeta.`); openColleagueForm(colleague); return; }
+  if (!client?.driveUrl) { toast("⚠ Este evento todavía no tiene carpeta de Drive. Creala con «Crear carpeta en Drive» en la ficha y después compartila.", 6000); return; }
+  if (!colleague?.email) { toast(`Cargale el Gmail a ${colleague?.name} para poder compartirle la carpeta.`); openColleagueForm(colleague); return; }
   if (!deps.driveAutoAvailable(client.salon)) {
-    deps.toast(`Esta carpeta no se creó desde una cuenta de Drive conectada, así que no la puedo compartir sola. Abrila y compartila con ${colleague.email} como Editor.`, 8000);
+    toast(`Esta carpeta no se creó desde una cuenta de Drive conectada, así que no la puedo compartir sola. Abrila y compartila con ${colleague.email} como Editor.`, 8000);
     return;
   }
   try {
     const out = await driveRequest("share", { coverageId });
     data.coverages = data.coverages.map((x) => (x.id === coverageId ? { ...x, drive_shared_at: out.sharedAt, drive_shared_email: out.email } : x));
-    deps.toast(`Listo: ${colleague.name} ya puede subir fotos a la carpeta del evento (le llegó un mail de Google).`, 5000);
+    toast(`Listo: ${colleague.name} ya puede subir fotos a la carpeta del evento (le llegó un mail de Google).`, 5000);
   } catch (err) {
-    deps.toast(err.message, 8000);
+    toast(err.message, 8000);
   }
   refreshAll(cv.client_id);
 }
@@ -476,14 +494,14 @@ export async function shareDriveForClient(clientId) {
     } catch (err) { console.error(err); failed.push(firstName(colleague.name)); }
   }
   refreshAll(clientId);
-  if (names.length) deps.toast(`Carpeta creada y compartida con ${names.join(", ")}${failed.length ? `. No se pudo con ${failed.join(", ")}: probá «Compartir Drive»` : ""}.`, 6000);
-  else if (failed.length) deps.toast(`Carpeta creada, pero no se pudo compartir con ${failed.join(", ")}. Probá «Compartir Drive».`, 6000);
+  if (names.length) toast(`Carpeta creada y compartida con ${names.join(", ")}${failed.length ? `. No se pudo con ${failed.join(", ")}: probá «Compartir Drive»` : ""}.`, 6000);
+  else if (failed.length) toast(`Carpeta creada, pero no se pudo compartir con ${failed.join(", ")}. Probá «Compartir Drive».`, 6000);
 }
 
 // ── WhatsApp ──────────────────────────────────────────────────────────────
 function sendWhatsapp(colleague, text) {
   const phone = deps.whatsappNumber(colleague?.phone);
-  if (!phone) { deps.toast(`Cargale el WhatsApp a ${colleague?.name || "este colega"}.`); openColleagueForm(colleague); return; }
+  if (!phone) { toast(`Cargale el WhatsApp a ${colleague?.name || "este colega"}.`); openColleagueForm(colleague); return; }
   deps.openWhatsappApp(`whatsapp://send/?phone=${phone}&text=${encodeURIComponent(text)}`);
 }
 
@@ -581,18 +599,18 @@ function updateDiscountHelp(form) {
 async function saveDiscountForm(form) {
   const f = new FormData(form);
   const row = { colleague_id: form.dataset.colleague, description: String(f.get("description") || "").trim(), total_amount: num(f.get("total_amount")), installments: Math.min(60, Math.max(1, Number(f.get("installments")) || 1)), created_on: f.get("created_on") || today() };
-  if (!row.description || row.total_amount <= 0) { deps.toast("Completá el concepto y el monto."); return; }
+  if (!row.description || row.total_amount <= 0) { toast("Completá el concepto y el monto."); return; }
   await withBusy(form, async () => {
     const [saved] = await run(supabase.from("colleague_discounts").insert(row).select());
     data.discounts = [...data.discounts, saved];
-    closeDialog("colFormDialog"); deps.toast("Descuento guardado"); refreshAll();
+    closeDialog("colFormDialog"); toast("Descuento guardado"); refreshAll();
   });
 }
 async function deleteDiscount(id) {
   if (!confirm("¿Borrar este descuento?")) return;
   await run(supabase.from("colleague_discounts").delete().eq("id", id));
   data.discounts = data.discounts.filter((d) => d.id !== id);
-  deps.toast("Descuento borrado"); refreshAll();
+  toast("Descuento borrado"); refreshAll();
 }
 
 // ── pagos ─────────────────────────────────────────────────────────────────
@@ -600,7 +618,7 @@ function openPaymentForm(colleagueId) {
   const c = colleagueById(colleagueId); if (!c) return;
   const unpaid = data.coverages.filter((cv) => cv.colleague_id === colleagueId && !cv.payment_id).sort(byDate);
   const discounts = data.discounts.filter((d) => d.colleague_id === colleagueId && discountRemaining(d) > 0);
-  if (!unpaid.length && !discounts.length) { deps.toast(`${c.name} no tiene nada pendiente para pagar.`); return; }
+  if (!unpaid.length && !discounts.length) { toast(`${c.name} no tiene nada pendiente para pagar.`); return; }
   showDialog("colFormDialog", `<form id="colPaymentForm" data-colleague="${colleagueId}">
     ${head(c.name, "Registrar pago", "colFormDialog")}
     ${unpaid.length ? `<p class="col-label">Eventos que le pagás <small>(los futuros vienen sin marcar)</small></p>
@@ -641,7 +659,7 @@ function updatePaymentTotals(form) {
 }
 async function savePaymentForm(form) {
   const v = paymentValues(form);
-  if (v.error) { deps.toast(v.error); return; }
+  if (v.error) { toast(v.error); return; }
   const colleagueId = form.dataset.colleague;
   await withBusy(form, async () => {
     const paymentId = await run(supabase.rpc("register_colleague_payment", {
@@ -651,7 +669,7 @@ async function savePaymentForm(form) {
     closeDialog("colFormDialog");
     await loadColleagues();
     const p = data.payments.find((x) => x.id === paymentId);
-    deps.toast(`Pago registrado: ${money(v.net)}`);
+    toast(`Pago registrado: ${money(v.net)}`);
     if (p && colleagueById(colleagueId)?.phone && confirm("Pago registrado. ¿Le mandás el detalle por WhatsApp?")) sendWhatsapp(colleagueById(colleagueId), paymentMessage(p));
   });
 }
@@ -659,7 +677,7 @@ async function undoPayment(id) {
   const p = data.payments.find((x) => x.id === id); if (!p) return;
   if (!confirm(`¿Deshacer el pago del ${deps.dateText(p.paid_on)} por ${money(p.net)}?\n\nLos eventos vuelven a quedar pendientes y las cuotas de descuento de ese pago se anulan.`)) return;
   await run(supabase.from("colleague_payments").delete().eq("id", id));
-  deps.toast("Pago deshecho");
+  toast("Pago deshecho");
   await loadColleagues();
 }
 
@@ -695,14 +713,14 @@ async function regenerateCalendar(id) {
   const token = await run(supabase.rpc("regenerate_colleague_calendar_token", { p_colleague_id: id }));
   data.colleagues = data.colleagues.map((c) => (c.id === id ? { ...c, calendar_token: token } : c));
   openCalendarDialog(id);
-  deps.toast("Link nuevo generado");
+  toast("Link nuevo generado");
 }
 
 // ── eventos ───────────────────────────────────────────────────────────────
 async function withBusy(form, fn) {
   const btns = [...form.querySelectorAll("button")];
   btns.forEach((b) => (b.disabled = true));
-  try { await fn(); } catch (err) { console.error(err); deps.toast(friendlyError(err), 6000); } finally { btns.forEach((b) => (b.disabled = false)); }
+  try { await fn(); } catch (err) { console.error(err); toast(friendlyError(err), 6000); } finally { btns.forEach((b) => (b.disabled = false)); }
 }
 
 const ACTIONS = {
@@ -718,10 +736,10 @@ const ACTIONS = {
   "undo-payment": (id) => undoPayment(id),
   "wa-payment": (id) => { const p = data.payments.find((x) => x.id === id); if (p) sendWhatsapp(colleagueById(p.colleague_id), paymentMessage(p)); },
   calendar: (id) => openCalendarDialog(id),
-  "cal-copy": async () => { const v = document.querySelector("[data-col-cal-link]")?.value; try { await navigator.clipboard.writeText(v); deps.toast("Link copiado"); } catch { deps.toast("No se pudo copiar: seleccionalo y copialo a mano"); } },
+  "cal-copy": async () => { const v = document.querySelector("[data-col-cal-link]")?.value; try { await navigator.clipboard.writeText(v); toast("Link copiado"); } catch { toast("No se pudo copiar: seleccionalo y copialo a mano"); } },
   "cal-wa": (id) => { const c = colleagueById(id); if (c) sendWhatsapp(c, calendarMessage(c)); },
   "cal-regen": (id) => regenerateCalendar(id),
-  assign: (clientId) => { if (status !== "ready") { deps.toast("Esperá que terminen de cargar los colegas."); return; } openCoverageForm(clientId, null); },
+  assign: (clientId) => { if (status !== "ready") { toast("Esperá que terminen de cargar los colegas."); return; } openCoverageForm(clientId, null); },
   "edit-coverage": (id) => { const cv = data.coverages.find((x) => x.id === id); if (cv) openCoverageForm(cv.client_id, cv); },
   "del-coverage": (id) => deleteCoverage(id),
   "wa-coverage": (id) => { const cv = data.coverages.find((x) => x.id === id); if (cv) sendWhatsapp(colleagueById(cv.colleague_id), coverageMessage(cv)); },
@@ -738,7 +756,7 @@ export function initColleagues(dependencies) {
     const action = ACTIONS[el.dataset.col];
     if (!action) return;
     e.preventDefault(); e.stopPropagation();
-    Promise.resolve(action(el.dataset.id)).catch((err) => { console.error(err); deps.toast(friendlyError(err), 6000); });
+    Promise.resolve(action(el.dataset.id)).catch((err) => { console.error(err); toast(friendlyError(err), 6000); });
   });
   document.addEventListener("change", (e) => {
     if (e.target.matches("[data-col-toggle-inactive]")) { showInactive = e.target.checked; renderColleagues(); }
