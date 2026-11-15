@@ -74,6 +74,27 @@
   .notices ul { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
   .notices li { font-size:14px; line-height:1.4; display:grid; grid-template-columns:22px 1fr; gap:6px; }
   .notices li small { grid-column:2; color:var(--muted); font-size:12px; }
+  .pay { display:grid; gap:10px; margin-top:8px; }
+  .pay h3 { margin:14px 0 0; }
+  .pay h3 small { color:var(--muted); font-weight:400; }
+  .pay-hero { background:linear-gradient(135deg,rgba(201,168,76,.2),rgba(201,168,76,.05)); border:1px solid var(--gold-border); border-radius:16px; padding:16px; display:grid; gap:6px; }
+  .pay-hero > span { color:var(--muted); font-size:13px; text-transform:uppercase; letter-spacing:.06em; }
+  .pay-hero > strong { font-size:34px; color:var(--gold-2); }
+  .pay-hero small { color:var(--muted); font-size:13px; }
+  .pay-calc { list-style:none; margin:4px 0 0; padding:0; display:grid; gap:4px; font-size:14px; }
+  .pay-calc li, .pay-row { display:flex; justify-content:space-between; gap:12px; align-items:center; }
+  .pay-list { list-style:none; margin:0; padding:0; display:grid; gap:6px; }
+  .pay-row { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:10px 12px; }
+  .pay-row div { display:grid; gap:2px; min-width:0; }
+  .pay-row span { color:var(--muted); font-size:13px; }
+  .pay-row b { white-space:nowrap; }
+  .pay-row b.ok { color:var(--ok); }
+  .pay-empty { margin:0; font-size:14px; }
+  .pay-sum { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .pay-sum > div { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px; display:grid; gap:2px; }
+  .pay-sum span { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.05em; }
+  .pay-sum strong { font-size:20px; }
+  .pay-sum small { color:var(--muted); font-size:12px; }
   .cal { margin-top:8px; }
   .cal-head { display:grid; grid-template-columns:44px 1fr 44px; align-items:center; gap:8px; text-align:center; margin-bottom:10px; }
   .cal-head strong { display:block; font-size:18px; }
@@ -185,7 +206,7 @@
     const me = state.me, today = todayIso();
     const mineCount = state.clients.flatMap((c) => c.coverages).filter((cv) => cv.date >= today).length;
     const salonCount = state.clients.filter((c) => c.event_date >= today).length;
-    const list = tab === "cal" ? [] : itemsFor(tab);
+    const list = tab === "cal" || tab === "pay" ? [] : itemsFor(tab);
     let lastMonth = "";
     const cards = list.map((it) => {
       const m = it.date.slice(0, 7);
@@ -202,10 +223,46 @@
         <button class="tab ${tab === "mine" ? "active" : ""}" data-tab="mine" aria-pressed="${tab === "mine"}">Mis coberturas <b>${mineCount}</b></button>
         <button class="tab ${tab === "all" ? "active" : ""}" data-tab="all" aria-pressed="${tab === "all"}">Todos los de mi salón <b>${salonCount}</b></button>
         <button class="tab ${tab === "cal" ? "active" : ""}" data-tab="cal" aria-pressed="${tab === "cal"}">📅 Calendario</button>
+        <button class="tab ${tab === "pay" ? "active" : ""}" data-tab="pay" aria-pressed="${tab === "pay"}">💰 Mis cobros</button>
       </nav>
-      ${tab === "cal" ? calendarHtml() : `<label class="toggle"><input type="checkbox" data-act="past" ${showPast ? "checked" : ""}> Ver eventos ya realizados (últimos 60 días)</label>
+      ${tab === "pay" ? payHtml() : tab === "cal" ? calendarHtml() : `<label class="toggle"><input type="checkbox" data-act="past" ${showPast ? "checked" : ""}> Ver eventos ya realizados (últimos 60 días)</label>
       ${list.length ? cards : `<div class="empty">${tab === "mine" ? (showPast ? "No cubriste eventos en los últimos 60 días." : "Todavía no tenés coberturas asignadas.") : (me.salons.length ? "No hay eventos en tu salón." : "Todavía no tenés un salón asignado.")}</div>`}`}
     </div>`;
+  }
+
+  // ── Mis cobros: lo que le corresponde cobrar y por qué trabajo ──
+  const money = (v) => new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(Number(v) || 0);
+  function payHtml() {
+    const p = state.pay;
+    if (!p) return `<div class="empty">No se pudo cargar tu información de cobros.</div>`;
+    const short = (iso) => fmt(iso, { day: "numeric", month: "short" });
+    const jobName = (j) => `${j.kind === "session" ? "Sesión de fotos · " : ""}${j.honoree || "Evento"}`;
+    const done = p.pending.filter((j) => j.done), next = p.pending.filter((j) => !j.done);
+    const row = (j) => `<li class="pay-row"><div><strong>${esc(jobName(j))}</strong><span>${esc(short(j.date))}${j.type ? ` · ${esc(j.type)}` : ""}${j.salon ? ` · ${esc(j.salon)}` : ""}</span></div><b>${money(j.amount)}</b></li>`;
+    return `<section class="pay">
+      <div class="pay-hero">
+        <span>Hoy te corresponde cobrar</span>
+        <strong>${money(p.now)}</strong>
+        <ul class="pay-calc">
+          <li><span>Trabajos realizados sin cobrar</span><b>${money(p.gross)}</b></li>
+          ${p.cuotaNow ? `<li><span>Cuota de descuento</span><b>− ${money(p.cuotaNow)}</b></li>` : ""}
+          ${p.creditUsed ? `<li><span>Ya cobrado a cuenta</span><b>− ${money(p.creditUsed)}</b></li>` : ""}
+        </ul>
+        ${p.credit > p.creditUsed ? `<small>Tenés ${money(p.credit - p.creditUsed)} cobrados a cuenta que se descuentan de los próximos trabajos.</small>` : ""}
+      </div>
+      <div class="pay-sum">
+        <div><span>Ya cobraste</span><strong>${money(p.paidTotal)}</strong><small>${p.paidJobs} ${p.paidJobs === 1 ? "trabajo pagado" : "trabajos pagados"}</small></div>
+        <div><span>Te descontaron</span><strong>${money(p.discountedTotal)}</strong><small>${p.discountedBy.length ? "ver detalle abajo" : "sin descuentos"}</small></div>
+      </div>
+      ${p.discountedBy.length ? `<h3>Descontado por concepto</h3><ul class="pay-list">${p.discountedBy.map((d) => `<li class="pay-row"><div><strong>${esc(d.description)}</strong><span>${d.remaining > 0 ? `Total ${money(d.total)} · resta ${money(d.remaining)}` : `Total ${money(d.total)} · saldado ✔`}</span></div><b>− ${money(d.applied)}</b></li>`).join("")}</ul>` : ""}
+      <h3>Trabajos realizados sin cobrar</h3>
+      ${done.length ? `<ul class="pay-list">${done.map(row).join("")}</ul>` : `<p class="muted pay-empty">No tenés trabajos realizados pendientes de cobro.</p>`}
+      <h3>Próximos trabajos <small>· ${money(p.future)}</small></h3>
+      ${next.length ? `<ul class="pay-list">${next.map(row).join("")}</ul>` : `<p class="muted pay-empty">No tenés trabajos próximos asignados.</p>`}
+      ${p.discounts.length ? `<h3>Descuentos pendientes</h3><ul class="pay-list">${p.discounts.map((d) => `<li class="pay-row"><div><strong>${esc(d.description)}</strong><span>Total ${money(d.total)} · cuota ${d.paidCuotas}/${d.installments} · resta ${money(d.remaining)}</span></div><b>− ${money(d.nextCuota)}</b></li>`).join("")}</ul><p class="muted pay-empty">El monto de la derecha es la cuota que se descuenta en el próximo pago.</p>` : ""}
+      <h3>Cobros recibidos <small>(últimos 6 meses)</small></h3>
+      ${p.payments.length ? `<ul class="pay-list">${p.payments.map((x) => `<li class="pay-row"><div><strong>${x.kind === "advance" ? "💵 Pago a cuenta" : `Pago de ${x.jobs.length} ${x.jobs.length === 1 ? "trabajo" : "trabajos"}`}</strong><span>${esc(short(x.date))}${x.kind !== "advance" && x.jobs.length ? ` · ${esc(x.jobs.map((j) => jobName(j)).join(", "))}` : ""}${x.discounts ? ` · descuento − ${money(x.discounts)}` : ""}${x.advanceUsed ? ` · a cuenta − ${money(x.advanceUsed)}` : ""}${x.notes ? ` · ${esc(x.notes)}` : ""}</span></div><b class="ok">${money(x.net)}</b></li>`).join("")}</ul>` : `<p class="muted pay-empty">Todavía no hay cobros registrados.</p>`}
+    </section>`;
   }
 
   // ── Calendario propio: solo lo que tiene asignado (eventos y sesiones) ──

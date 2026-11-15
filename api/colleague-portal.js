@@ -19,7 +19,9 @@ import { createClient } from "@supabase/supabase-js";
 // Reglas (todo se filtra acá, con service role):
 //  - ve los eventos del MISMO dueño que cubre ella o que son de sus salones,
 //    desde 60 días atrás;
-//  - nunca recibe montos, tarifas, pagos ni rendiciones;
+//  - nunca recibe lo que cobra el dueño (tarifas, rendiciones) ni lo de otras
+//    personas; sí recibe SUS cobros ("pay": lo que le corresponde por cada
+//    trabajo, descuentos, pagos a cuenta y pagos recibidos);
 //  - lo que marca/escribe va a colleague_task_marks / colleague_notes (no
 //    toca tasks ni clients: el dueño confirma desde su app).
 
@@ -51,6 +53,55 @@ async function canSeeClient(admin, colleague, clientId) {
   if ((colleague.salons || []).includes(client.salon)) return client;
   const { data: cov } = await admin.from("colleague_coverages").select("id").eq("client_id", clientId).eq("colleague_id", colleague.id).limit(1);
   return cov?.length ? client : null;
+}
+
+// Lo que le corresponde cobrar (misma cuenta que "Le debés" en Janos Control).
+async function loadPay(admin, colleague) {
+  const today = todayAr();
+  const sinceSix = new Date(Date.now() - 3 * 3600000 - 183 * 86400000).toISOString().slice(0, 10);
+  const [{ data: covs, error: e1 }, { data: pays, error: e2 }, { data: discs, error: e3 }] = await Promise.all([
+    admin.from("colleague_coverages").select("id,kind,work_date,amount,payment_id,clients!inner(event_date,honoree,event_type,salon)").eq("colleague_id", colleague.id),
+    admin.from("colleague_payments").select("id,kind,paid_on,gross,discounts,net,advance_used,notes,created_at").eq("colleague_id", colleague.id).order("paid_on", { ascending: false }),
+    admin.from("colleague_discounts").select("id,description,total_amount,installments,created_on").eq("colleague_id", colleague.id),
+  ]);
+  if (e1) throw e1; if (e2) throw e2; if (e3) throw e3;
+  const discIds = (discs || []).map((d) => d.id);
+  let apps = [];
+  if (discIds.length) {
+    const { data, error } = await admin.from("colleague_discount_applications").select("discount_id,payment_id,amount").in("discount_id", discIds);
+    if (error) throw error; apps = data || [];
+  }
+  const n = (v) => Math.round((Number(v) || 0) * 100) / 100;
+  const jobs = (covs || []).map((cv) => ({ id: cv.id, kind: cv.kind || "event", date: cv.work_date || cv.clients.event_date, honoree: cv.clients.honoree, type: cv.clients.event_type, salon: cv.clients.salon, amount: n(cv.amount), paymentId: cv.payment_id }));
+  const unpaid = jobs.filter((j) => !j.paymentId);
+  const due = unpaid.filter((j) => j.date <= today);
+  const gross = n(due.reduce((s, j) => s + j.amount, 0));
+  const discounts = (discs || []).map((d) => {
+    const applied = n(apps.filter((a) => a.discount_id === d.id).reduce((s, a) => s + Number(a.amount), 0));
+    const rem = n(Number(d.total_amount) - applied);
+    const cuota = n(Number(d.total_amount) / Math.max(1, d.installments));
+    const paidCuotas = apps.filter((a) => a.discount_id === d.id).length;
+    return { description: d.description, total: n(d.total_amount), installments: d.installments, paidCuotas, applied, remaining: rem, nextCuota: rem <= 0 ? 0 : (rem - cuota < 1 ? rem : Math.min(rem, cuota)) };
+  });
+  const cuotas = n(discounts.reduce((s, d) => s + d.nextCuota, 0));
+  const credit = n((pays || []).reduce((s, p) => s + (p.kind === "advance" ? Number(p.net) : 0) - Number(p.advance_used || 0), 0));
+  const afterCuotas = n(Math.max(0, gross - Math.min(gross, cuotas)));
+  const payments = (pays || []).filter((p) => p.paid_on >= sinceSix).map((p) => ({
+    kind: p.kind, date: p.paid_on, net: n(p.net), gross: n(p.gross), discounts: n(p.discounts), advanceUsed: n(p.advance_used), notes: p.notes || "",
+    jobs: jobs.filter((j) => j.paymentId === p.id).map((j) => ({ date: j.date, honoree: j.honoree, kind: j.kind, amount: j.amount })),
+  }));
+  return {
+    now: n(Math.max(0, afterCuotas - credit)), gross, cuotaNow: n(gross - afterCuotas), creditUsed: n(Math.min(credit, afterCuotas)), credit,
+    future: n(unpaid.filter((j) => j.date > today).reduce((s, j) => s + j.amount, 0)),
+    pending: unpaid.sort((a, b) => a.date.localeCompare(b.date)).map(({ paymentId, id, ...j }) => ({ ...j, done: j.date <= today })),
+    discounts: discounts.filter((d) => d.remaining > 0),
+    // Totales históricos: lo que ya cobró y lo descontado por cada concepto.
+    paidTotal: n((pays || []).reduce((s, p) => s + Number(p.net), 0)),
+    paidJobs: jobs.filter((j) => j.paymentId).length,
+    discountedTotal: n(discounts.reduce((s, d) => s + d.applied, 0)),
+    discountedBy: discounts.filter((d) => d.applied > 0).map((d) => ({ description: d.description, applied: d.applied, total: d.total, remaining: d.remaining })),
+    payments,
+  };
 }
 
 async function loadData(admin, colleague) {
@@ -152,7 +203,8 @@ export default async function handler(req, res) {
       const { data: blocked, error: bErr } = await admin.from("colleague_unavailability").select("day,reason").eq("colleague_id", colleague.id).gte("day", todayAr()).order("day");
       if (bErr) throw bErr;
       const { data: owner } = await admin.from("profiles").select("display_name,whatsapp").eq("id", colleague.owner_id).maybeSingle();
-      return send(res, 200, { me: { name: colleague.name, role: colleague.role, salons: colleague.salons || [] }, ...out, notices: notices || [], blocked: blocked || [], boss: { name: owner?.display_name || "", whatsapp: owner?.whatsapp || "" } });
+      const pay = await loadPay(admin, colleague);
+      return send(res, 200, { me: { name: colleague.name, role: colleague.role, salons: colleague.salons || [] }, ...out, notices: notices || [], blocked: blocked || [], boss: { name: owner?.display_name || "", whatsapp: owner?.whatsapp || "" }, pay });
     }
 
     if (action === "seen") {
