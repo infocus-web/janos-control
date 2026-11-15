@@ -10,6 +10,7 @@ import { createClient } from "@supabase/supabase-js";
 //  - mark    { taskId, done }      → marca/desmarca una tarea como hecha
 //  - note    { clientId, body }    → agrega una nota al evento
 //  - unnote  { noteId }            → borra una nota suya
+//  - seen                          → marca sus avisos como leídos
 // (data/mark/note/unnote van con Authorization: Bearer <access_token>)
 //
 // Reglas (todo se filtra acá, con service role):
@@ -139,7 +140,16 @@ export default async function handler(req, res) {
 
     if (action === "data") {
       const out = await loadData(admin, colleague);
-      return send(res, 200, { me: { name: colleague.name, role: colleague.role, salons: colleague.salons || [] }, ...out });
+      // Avisos sin leer (asignaciones, cambios y bajas que hizo el dueño).
+      const { data: notices, error: nErr } = await admin.from("colleague_notices").select("id,kind,message,created_at").eq("colleague_id", colleague.id).is("read_at", null).order("created_at", { ascending: false }).limit(30);
+      if (nErr) throw nErr;
+      return send(res, 200, { me: { name: colleague.name, role: colleague.role, salons: colleague.salons || [] }, ...out, notices: notices || [] });
+    }
+
+    if (action === "seen") {
+      const { error } = await admin.from("colleague_notices").update({ read_at: new Date().toISOString() }).eq("colleague_id", colleague.id).is("read_at", null);
+      if (error) throw error;
+      return send(res, 200, { ok: true });
     }
 
     if (action === "mark") {

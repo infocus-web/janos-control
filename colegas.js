@@ -20,6 +20,17 @@ let data = emptyData();
 let status = "idle"; // idle | loading | ready | error
 let loadError = "";
 let showInactive = false;
+// Equipos: comparten la cuenta, pero cada jefe maneja y le paga a su gente.
+const DEFAULT_TEAMS = ["Pablo", "Dylan", "Gustavo"];
+const TEAM_KEY = "janos_colegas_team";
+let teamFilter = (() => { try { return localStorage.getItem(TEAM_KEY) || ""; } catch { return ""; } })();
+function teamOf(c) { return String(c?.team || "Pablo"); }
+function allTeams() { return [...new Set([...DEFAULT_TEAMS, ...data.colleagues.map(teamOf)])]; }
+function inTeam(c) { return !teamFilter || teamOf(c) === teamFilter; }
+// Modo de la vista: "team" (personal y pagos) | "assign" (repartir eventos).
+const MODE_KEY = "janos_colegas_mode";
+let colMode = (() => { try { return localStorage.getItem(MODE_KEY) === "assign" ? "assign" : "team"; } catch { return "team"; } })();
+let assignMonth = "", assignSalon = "", assignOnlyFree = false;
 let openColleagueId = null;
 
 function emptyData() { return { colleagues: [], coverages: [], payments: [], discounts: [], applications: [], notes: [], marks: [] }; }
@@ -147,17 +158,28 @@ export function renderColleagues() {
   if (status === "loading" || status === "idle") { root.innerHTML = `<div class="panel"><div class="empty">Cargando colegas…</div></div>`; return; }
   if (status === "error") { root.innerHTML = `<div class="panel"><div class="empty"><strong>No se pudieron cargar los colegas</strong>${esc(loadError)}<br><br><button class="secondary-btn" data-col="reload">Reintentar</button></div></div>`; return; }
 
-  const list = data.colleagues.filter((c) => showInactive || c.active);
-  const sums = data.colleagues.filter((c) => c.active).map(summary);
+  if (teamFilter && !allTeams().includes(teamFilter)) teamFilter = "";
+  const teamColleagues = data.colleagues.filter(inTeam);
+  const teamIds = new Set(teamColleagues.map((c) => c.id));
+  const list = teamColleagues.filter((c) => showInactive || c.active);
+  const sums = teamColleagues.filter((c) => c.active).map(summary);
   const totalOwed = num(sums.reduce((s, x) => s + x.net, 0));
-  const upcomingCount = data.coverages.filter((cv) => coverageDate(cv) >= today()).length;
+  const upcomingCount = data.coverages.filter((cv) => teamIds.has(cv.colleague_id) && coverageDate(cv) >= today()).length;
   const discountLeft = num(sums.reduce((s, x) => s + x.discountLeft, 0));
-  const inactiveCount = data.colleagues.filter((c) => !c.active).length;
+  const inactiveCount = teamColleagues.filter((c) => !c.active).length;
+  const teamTabs = `<div class="view-switch col-teams" aria-label="Equipo">${["", ...allTeams()].map((t) => `<button class="${teamFilter === t ? "active" : ""}" aria-pressed="${teamFilter === t}" data-col="team" data-id="${esc(t)}">${t ? `Equipo ${esc(t)}` : "Todos"} <b>${data.colleagues.filter((c) => c.active && (!t || teamOf(c) === t)).length}</b></button>`).join("")}</div>`;
 
+  const modeTabs = `<div class="view-switch col-modes" aria-label="Sección">
+    <button class="${colMode === "team" ? "active" : ""}" aria-pressed="${colMode === "team"}" data-col="mode" data-id="team">👥 Personal y pagos</button>
+    <button class="${colMode === "assign" ? "active" : ""}" aria-pressed="${colMode === "assign"}" data-col="mode" data-id="assign">📋 Repartir eventos</button>
+  </div>`;
+  if (colMode === "assign") { root.innerHTML = `${modeTabs}${teamTabs}${distributorHtml()}`; return; }
   root.innerHTML = `
+    ${modeTabs}
+    ${teamTabs}
     <div class="col-toolbar">
       <div class="col-stats">
-        <div class="col-stat col-stat-gold"><span>Les debés en total</span><strong>${money(totalOwed)}</strong><small>eventos ya realizados, con cuotas descontadas</small></div>
+        <div class="col-stat col-stat-gold"><span>${teamFilter ? `Equipo ${esc(teamFilter)} · les debe` : "Les debés en total"}</span><strong>${money(totalOwed)}</strong><small>eventos ya realizados, con cuotas descontadas</small></div>
         <div class="col-stat"><span>Coberturas próximas</span><strong>${upcomingCount}</strong><small>de hoy en adelante</small></div>
         <div class="col-stat"><span>Descuentos por cobrar</span><strong>${money(discountLeft)}</strong><small>equipos u otros adelantos</small></div>
       </div>
@@ -166,7 +188,8 @@ export function renderColleagues() {
         <button class="primary-btn" data-col="new-colleague">+ Agregar colega</button>
       </div>
     </div>
-    ${list.length ? `<div class="col-grid">${list.map(cardHtml).join("")}</div>` : `<div class="panel"><div class="empty"><strong>Todavía no cargaste colegas</strong>Agregá a las personas que cubren tus eventos con su tarifa, WhatsApp y Gmail.<br><br><button class="primary-btn" data-col="new-colleague">+ Agregar el primero</button></div></div>`}`;
+    ${list.length || !teamFilter ? "" : `<div class="panel"><div class="empty"><strong>El equipo ${esc(teamFilter)} todavía no tiene colegas</strong>Agregá a su personal con «+ Agregar colega».</div></div>`}
+    ${!list.length && teamFilter ? "" : list.length ? `<div class="col-grid">${list.map(cardHtml).join("")}</div>` : `<div class="panel"><div class="empty"><strong>Todavía no cargaste colegas</strong>Agregá a las personas que cubren tus eventos con su tarifa, WhatsApp y Gmail.<br><br><button class="primary-btn" data-col="new-colleague">+ Agregar el primero</button></div></div>`}`;
 }
 
 function cardHtml(c) {
@@ -175,7 +198,7 @@ function cardHtml(c) {
   return `<article class="col-card ${c.active ? "" : "inactive"}">
     <header class="col-card-head">
       <div class="col-avatar">${esc(firstName(c.name).charAt(0).toUpperCase() || "?")}</div>
-      <div class="col-card-name"><strong>${esc(c.name)}</strong><span>${esc(c.role || "Sin función")}${c.active ? "" : " · Inactivo"}</span></div>
+      <div class="col-card-name"><strong>${esc(c.name)}</strong><span>Equipo ${esc(teamOf(c))} · ${esc(c.role || "Sin función")}${c.active ? "" : " · Inactivo"}</span></div>
       <button class="icon-btn col-edit" title="Editar colega" data-col="edit-colleague" data-id="${c.id}">✎</button>
     </header>
     <div class="col-owed ${s.net > 0 ? "has-debt" : ""}"><span>Le debés</span><strong>${money(s.net)}</strong>${s.gross !== s.net ? `<small>${money(s.gross)} − cuota de descuento</small>` : `<small>${s.due.length ? `${s.due.length} ${s.due.length === 1 ? "evento" : "eventos"} sin pagar` : "Está al día"}</small>`}</div>
@@ -193,6 +216,126 @@ function cardHtml(c) {
       <button class="primary-btn" data-col="pay" data-id="${c.id}">Registrar pago</button>
     </footer>
   </article>`;
+}
+
+// ── repartir eventos: un selector por evento para elegir quién lo cubre ──
+// Cada equipo reparte lo suyo: el selector muestra solo su personal y la
+// cobertura del evento de ese equipo (si ya hay una, la cambia o la quita).
+function assignTeam() { return teamFilter || "Pablo"; }
+function teamCoverages(clientId, team) {
+  return data.coverages.filter((cv) => cv.client_id === clientId && (cv.kind || "event") === "event" && teamOf(colleagueById(cv.colleague_id)) === team);
+}
+function distributorHtml() {
+  const team = assignTeam();
+  const people = data.colleagues.filter((c) => c.active && teamOf(c) === team).sort((a, b) => a.name.localeCompare(b.name));
+  const upcoming = deps.getClients().filter((c) => c.eventDate && c.eventDate >= today()).sort((a, b) => a.eventDate.localeCompare(b.eventDate) || String(a.honoree).localeCompare(String(b.honoree)));
+  const months = [...new Set(upcoming.map((c) => c.eventDate.slice(0, 7)))];
+  const salons = [...new Set(upcoming.map((c) => c.salon).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  if (assignMonth && !months.includes(assignMonth)) assignMonth = "";
+  if (assignSalon && !salons.includes(assignSalon)) assignSalon = "";
+  const rows = upcoming
+    .filter((c) => !assignMonth || c.eventDate.startsWith(assignMonth))
+    .filter((c) => !assignSalon || c.salon === assignSalon)
+    .filter((c) => !assignOnlyFree || !teamCoverages(c.id, team).length);
+  // Quién ya trabaja cada día (para avisar si se superpone).
+  const busy = new Map();
+  data.coverages.forEach((cv) => { const d = coverageDate(cv); if (!busy.has(d)) busy.set(d, new Map()); busy.get(d).set(cv.colleague_id, cv.client_id); });
+  const counts = new Map(people.map((p) => [p.id, 0]));
+  let free = 0;
+  rows.forEach((c) => { const cvs = teamCoverages(c.id, team); if (!cvs.length) free++; cvs.forEach((cv) => counts.set(cv.colleague_id, (counts.get(cv.colleague_id) || 0) + 1)); });
+  const monthName = (m) => { const t = new Intl.DateTimeFormat("es-AR", { month: "long", year: "numeric" }).format(new Date(`${m}-15T12:00:00`)); return t.charAt(0).toUpperCase() + t.slice(1); };
+  const packName = (p) => ({ silver: "Silver", gold: "Golden", vip: "VIP", informal: "Informal" })[p] || p || "";
+
+  const rowHtml = (c) => {
+    const cvs = teamCoverages(c.id, team);
+    const cv = cvs[0] || null;
+    const paid = Boolean(cv?.payment_id);
+    const dayBusy = busy.get(c.eventDate) || new Map();
+    const opts = people.map((p) => {
+      const other = dayBusy.get(p.id);
+      const clash = other && other !== c.id;
+      return `<option value="${p.id}" ${cv?.colleague_id === p.id ? "selected" : ""}>${esc(p.name)}${clash ? " · ⚠ ya tiene otro evento ese día" : ""}</option>`;
+    }).join("");
+    const orphan = cv && !people.some((p) => p.id === cv.colleague_id) ? `<option value="${cv.colleague_id}" selected>${esc(colleagueById(cv.colleague_id)?.name || "Colega")} (inactivo)</option>` : "";
+    return `<div class="col-assign-row ${cv ? "" : "free"}">
+      <div class="col-assign-date"><strong>${esc(c.eventDate.slice(8, 10))}/${esc(c.eventDate.slice(5, 7))}</strong><span>${esc(new Intl.DateTimeFormat("es-AR", { weekday: "short" }).format(new Date(`${c.eventDate}T12:00:00`)))}</span></div>
+      <div class="col-assign-ev"><button class="col-link" data-col="open-event" data-id="${c.id}">${esc(c.honoree || "Evento")}</button><small>${esc([c.type, c.salon, c.code ? `#${c.code}` : "", packName(c.pack)].filter(Boolean).join(" · "))}</small></div>
+      <div class="col-assign-pick">
+        <select data-col-assign="${c.id}" aria-label="Quién cubre ${esc(c.honoree || "el evento")}" ${paid ? "disabled title=\"Ya está pagado: cambialo desde la ficha del evento\"" : ""}>
+          <option value="">— Sin asignar —</option>${orphan}${opts}
+        </select>
+        ${cvs.length > 1 ? `<small>+${cvs.length - 1} más del equipo (ver ficha)</small>` : paid ? `<small>Pagado</small>` : ""}
+      </div>
+    </div>`;
+  };
+
+  let lastMonth = "";
+  const list = rows.map((c) => {
+    const m = c.eventDate.slice(0, 7);
+    const head = m !== lastMonth ? `<h3 class="col-assign-month">${esc(monthName(m))}</h3>` : "";
+    lastMonth = m;
+    return head + rowHtml(c);
+  }).join("");
+
+  return `<div class="col-assign">
+    <div class="col-assign-top">
+      <p class="col-help">Repartiendo los eventos del <b>Equipo ${esc(team)}</b>${teamFilter ? "" : " (elegí otro equipo arriba para repartir su personal)"}. Al elegir a alguien se le asigna el evento con su tarifa; el horario y las indicaciones los completás después en la ficha del evento.</p>
+      <div class="toolbar col-assign-filters">
+        <select data-col-assign-filter="month" aria-label="Mes"><option value="">Todos los meses</option>${months.map((m) => `<option value="${m}" ${assignMonth === m ? "selected" : ""}>${esc(monthName(m))}</option>`).join("")}</select>
+        <select data-col-assign-filter="salon" aria-label="Salón"><option value="">Todos los salones</option>${salons.map((x) => `<option value="${esc(x)}" ${assignSalon === x ? "selected" : ""}>${esc(x)}</option>`).join("")}</select>
+        <label class="col-toggle"><input type="checkbox" data-col-assign-filter="free" ${assignOnlyFree ? "checked" : ""}> Solo sin asignar</label>
+      </div>
+      <div class="col-assign-counts">
+        <span class="col-chip ${free ? "warn" : "ok"}">Sin asignar: ${free}</span>
+        ${people.map((p) => `<span class="col-chip">${esc(p.name.split(/\s+/)[0])}: ${counts.get(p.id) || 0}</span>`).join("")}
+      </div>
+    </div>
+    ${!people.length ? `<div class="panel"><div class="empty"><strong>El Equipo ${esc(team)} no tiene personal activo</strong>Cargalo en «👥 Personal y pagos» con «+ Agregar colega».</div></div>`
+      : rows.length ? `<div class="col-assign-list">${list}</div>`
+      : `<div class="panel"><div class="empty">${upcoming.length ? "No hay eventos con esos filtros." : "No hay eventos próximos cargados."}</div></div>`}
+  </div>`;
+}
+
+async function assignFromSelector(select) {
+  const clientId = select.dataset.colAssign;
+  const client = clientById(clientId);
+  const team = assignTeam();
+  const current = teamCoverages(clientId, team)[0] || null;
+  const prevId = current?.colleague_id || "";
+  const newId = select.value;
+  if ((current?.colleague_id || "") === newId) return;
+  select.disabled = true;
+  try {
+    if (current?.payment_id) throw new Error("Esa cobertura ya está pagada: cambiala desde la ficha del evento.");
+    if (newId && data.coverages.some((cv) => cv.client_id === clientId && cv.colleague_id === newId && (cv.kind || "event") === "event" && cv.id !== current?.id)) throw new Error("Ya está asignada a este evento.");
+    const person = newId ? colleagueById(newId) : null;
+    if (current?.drive_shared_at) await driveRequest("unshare", { coverageId: current.id }).catch(() => {});
+    let saved = null;
+    if (!newId) {
+      await run(supabase.from("colleague_coverages").delete().eq("id", current.id));
+      data.coverages = data.coverages.filter((x) => x.id !== current.id);
+      toast(`${client?.honoree || "Evento"}: sin asignar`);
+    } else if (current) {
+      [saved] = await run(supabase.from("colleague_coverages").update({ colleague_id: newId, amount: num(person?.default_fee), role: person?.role || current.role || null, drive_shared_at: null, drive_shared_email: null }).eq("id", current.id).select());
+      data.coverages = data.coverages.map((x) => (x.id === current.id ? saved : x));
+    } else {
+      [saved] = await run(supabase.from("colleague_coverages").insert({
+        client_id: clientId, colleague_id: newId, kind: "event", role: person?.role || null,
+        amount: num(person?.default_fee), location: lastLocationForSalon(client?.salon) || client?.salon || null,
+      }).select());
+      data.coverages = [...data.coverages, saved];
+    }
+    await notifyChange({ client, cv: saved || current, added: saved ? person : null, removed: prevId && prevId !== newId ? colleagueById(prevId) : null });
+    if (saved) {
+      toast(`${client?.honoree || "Evento"} → ${person?.name}`);
+      // Si el evento ya tiene carpeta de Drive conectada, se la comparte sola.
+      if (client?.driveUrl && person?.email && deps.driveAutoAvailable(client.salon)) await shareDrive(saved.id).catch(() => {});
+    }
+  } catch (err) {
+    console.error(err);
+    toast(friendlyError(err), 6000);
+  }
+  refreshAll();
 }
 
 // ── panel en la ficha del evento ──────────────────────────────────────────
@@ -323,12 +466,13 @@ function salonOptions(selected = []) {
 
 // Alta / edición de colega
 function openColleagueForm(colleague) {
-  const c = colleague || { name: "", role: "", phone: "", email: "", default_fee: 0, notes: "", active: true };
+  const c = colleague || { name: "", role: "", phone: "", email: "", default_fee: 0, notes: "", active: true, team: teamFilter || "Pablo" };
   showDialog("colFormDialog", `<form id="colColleagueForm" data-id="${c.id || ""}">
     ${head("Equipo", c.id ? `Editar ${c.name}` : "Nuevo colega", "colFormDialog")}
     <div class="form-grid">
       <label>Nombre y apellido<input name="name" required maxlength="80" value="${esc(c.name)}" placeholder="Ej. Dylan Pérez"></label>
       <label>Función<input name="role" maxlength="60" value="${esc(c.role || "")}" placeholder="Fotógrafo, videógrafo, asistente…" list="colRoleList"></label>
+      <label>Equipo (quién lo maneja y le paga)<select name="team">${allTeams().map((t) => `<option value="${esc(t)}" ${teamOf(c) === t ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></label>
       <label>WhatsApp<input name="phone" type="tel" inputmode="tel" value="${esc(c.phone || "")}" placeholder="Ej. 11 2345 6789"></label>
       <label>Gmail (para compartirle Drive)<input name="email" type="email" inputmode="email" value="${esc(c.email || "")}" placeholder="nombre@gmail.com"></label>
       <label>Tarifa por evento<input name="default_fee" type="number" min="0" step="1" inputmode="numeric" value="${Number(c.default_fee) || ""}" placeholder="Ej. 60000"></label>
@@ -359,6 +503,7 @@ async function saveColleagueForm(form) {
     default_fee: num(f.get("default_fee")),
     notes: String(f.get("notes") || "").trim() || null,
     salons: f.getAll("salons").map(String),
+    team: String(f.get("team") || "Pablo"),
   };
   if (!row.name) { toast("Poné el nombre del colega."); return; }
   const id = form.dataset.id;
@@ -418,7 +563,7 @@ function openCoverageForm(clientId, coverage, kind = "event") {
     <div class="form-grid">
       <label>Colega<select name="colleague_id" required ${paid ? "disabled" : ""}>
         <option value="">Elegí de la lista…</option>
-        ${options.map((c) => `<option value="${c.id}" data-fee="${Number(c.default_fee) || 0}" data-role="${esc(c.role || "")}" ${c.id === cv.colleague_id ? "selected" : ""}>${esc(c.name)}${c.role ? ` · ${esc(c.role)}` : ""}</option>`).join("")}
+        ${allTeams().filter((t) => options.some((c) => teamOf(c) === t)).map((t) => `<optgroup label="Equipo ${esc(t)}">${options.filter((c) => teamOf(c) === t).map((c) => `<option value="${c.id}" data-fee="${Number(c.default_fee) || 0}" data-role="${esc(c.role || "")}" ${c.id === cv.colleague_id ? "selected" : ""}>${esc(c.name)}${c.role ? ` · ${esc(c.role)}` : ""}</option>`).join("")}</optgroup>`).join("")}
         ${coverage ? "" : `<option value="__new">＋ Agregar un colega nuevo…</option>`}
       </select></label>
       <label>Función en este evento<input name="role" maxlength="60" value="${esc(cv.role || "")}" placeholder="Fotógrafo, videógrafo…" list="colRoleList2"></label>
@@ -499,6 +644,14 @@ async function saveCoverageForm(form) {
     }
     closeDialog("colFormDialog");
     refreshAll(clientId);
+    const swapped = existing && existing.colleague_id !== saved.colleague_id;
+    const moved = existing && !swapped && (hhmm(existing.arrival_time) !== hhmm(saved.arrival_time) || (existing.location || "") !== (saved.location || "") || (existing.work_date || "") !== (saved.work_date || ""));
+    await notifyChange({
+      client, cv: saved,
+      added: !existing || swapped ? colleagueById(saved.colleague_id) : null,
+      removed: swapped ? colleagueById(existing.colleague_id) : null,
+      changed: moved ? colleagueById(saved.colleague_id) : null,
+    });
     // Si cambió de colega, el anterior pierde el acceso a la carpeta.
     if (existing && existing.colleague_id !== saved.colleague_id && existing.drive_shared_at) await driveRequest("unshare", { coverageId: saved.id, email: existing.drive_shared_email }).catch(() => {});
     // Acceso a Drive: se comparte solo si ya están la carpeta y el Gmail.
@@ -520,6 +673,7 @@ async function deleteCoverage(id) {
   await run(supabase.from("colleague_coverages").delete().eq("id", id));
   data.coverages = data.coverages.filter((x) => x.id !== id);
   toast(cv.drive_shared_at ? "Colega quitado y sin acceso a la carpeta de Drive" : "Colega quitado del evento");
+  await notifyChange({ client: clientById(cv.client_id), cv, removed: c });
   refreshAll(cv.client_id);
 }
 
@@ -578,6 +732,43 @@ export async function shareDriveForClient(clientId) {
   refreshAll(clientId);
   if (names.length) toast(`Carpeta creada y compartida con ${names.join(", ")}${failed.length ? `. No se pudo con ${failed.join(", ")}: probá «Compartir Drive»` : ""}.`, 6000);
   else if (failed.length) toast(`Carpeta creada, pero no se pudo compartir con ${failed.join(", ")}. Probá «Compartir Drive».`, 6000);
+}
+
+// ── avisos al personal (portal + WhatsApp a último momento) ───────────────
+// Cada cambio deja un aviso en el portal de la colega (/colega.html). Si el
+// trabajo es dentro de los próximos 7 días, además ofrece mandar WhatsApp.
+const LAST_MINUTE_DAYS = 7;
+let pendingWa = {};
+function daysUntil(iso) { return Math.round((new Date(`${iso}T12:00:00`) - new Date(`${today()}T12:00:00`)) / 86400000); }
+async function notifyChange({ client, cv, added = null, removed = null, changed = null }) {
+  if (!client || !cv || (!added && !removed && !changed)) return;
+  const what = isSession(cv) ? "la sesión de fotos de" : "el evento de";
+  const label = `${client.honoree || "Evento"}${client.type ? ` (${client.type})` : ""} · ${client.salon || ""} · ${dateLong(coverageDate(cv))}`;
+  const time = cv.arrival_time ? ` Presentarte ${hhmm(cv.arrival_time)} h.` : "";
+  const place = cv.location ? ` Lugar: ${cv.location}.` : "";
+  const rows = [];
+  if (added) rows.push({ colleague_id: added.id, client_id: client.id, kind: "assigned", message: `Te asignaron ${what} ${label}.${time}${place}` });
+  if (removed) rows.push({ colleague_id: removed.id, client_id: client.id, kind: "removed", message: `Ya no cubrís ${what} ${label}. Hubo un cambio de personal.` });
+  if (changed) rows.push({ colleague_id: changed.id, client_id: client.id, kind: "changed", message: `Cambiaron los datos de ${what} ${label}.${time}${place}` });
+  const { error } = await supabase.from("colleague_notices").insert(rows);
+  if (error) console.warn("No se pudo guardar el aviso:", error.message);
+
+  const d = daysUntil(coverageDate(cv));
+  if (d < 0 || d > LAST_MINUTE_DAYS) return;
+  pendingWa = {};
+  const people = [];
+  if (added?.phone) { pendingWa[added.id] = coverageMessage(cv); people.push({ c: added, label: `💬 Avisar a ${firstName(added.name)} (entra)` }); }
+  if (changed?.phone) { pendingWa[changed.id] = `Hola ${firstName(changed.name)}! Hubo un cambio:\n\n${coverageMessage(cv).split("\n").slice(2).join("\n")}`; people.push({ c: changed, label: `💬 Avisar a ${firstName(changed.name)} del cambio` }); }
+  if (removed?.phone) { pendingWa[removed.id] = `Hola ${firstName(removed.name)}! Te aviso que hubo un cambio de personal: ya no cubrís ${what} ${label}. ¡Gracias igual! 🙌`; people.push({ c: removed, label: `💬 Avisar a ${firstName(removed.name)} (sale)` }); }
+  if (!people.length) return;
+  showDialog("colFormDialog", `<div class="col-cal">
+    ${head(d === 0 ? "Es hoy" : `Faltan ${d} ${d === 1 ? "día" : "días"}`, "¿Les avisás por WhatsApp?", "colFormDialog")}
+    <p class="col-help">Ya les quedó el aviso en su portal. Como es a último momento, mandales también un WhatsApp (se abre con el mensaje escrito).</p>
+    <div class="modal-actions col-cal-actions">
+      <button class="ghost-btn" type="button" data-col="close" data-id="colFormDialog">No, gracias</button>
+      ${people.map((p) => `<button class="primary-btn" type="button" data-col="notify-wa" data-id="${p.c.id}">${esc(p.label)}</button>`).join("")}
+    </div>
+  </div>`);
 }
 
 // ── WhatsApp ──────────────────────────────────────────────────────────────
@@ -865,6 +1056,9 @@ const ACTIONS = {
   "del-coverage": (id) => deleteCoverage(id),
   "wa-coverage": (id) => { const cv = data.coverages.find((x) => x.id === id); if (cv) sendWhatsapp(colleagueById(cv.colleague_id), coverageMessage(cv)); },
   "share-drive": (id) => shareDrive(id),
+  mode: (m) => { colMode = m === "assign" ? "assign" : "team"; try { localStorage.setItem(MODE_KEY, colMode); } catch {} renderColleagues(); },
+  team: (t) => { teamFilter = t || ""; try { localStorage.setItem(TEAM_KEY, teamFilter); } catch {} renderColleagues(); },
+  "notify-wa": (id) => { const c = colleagueById(id); if (c && pendingWa[id]) { sendWhatsapp(c, pendingWa[id]); delete pendingWa[id]; } },
   "assign-session": (clientId) => { if (status !== "ready") { toast("Esperá que terminen de cargar los colegas."); return; } openCoverageForm(clientId, null, "session"); },
   "mark-confirm": (taskId) => confirmMark(taskId),
   "mark-discard": (taskId) => discardMark(taskId),
@@ -891,6 +1085,14 @@ export function initColleagues(dependencies) {
   });
   document.addEventListener("change", (e) => {
     if (e.target.matches("[data-col-toggle-inactive]")) { showInactive = e.target.checked; renderColleagues(); }
+    if (e.target.matches("[data-col-assign]")) assignFromSelector(e.target);
+    if (e.target.matches("[data-col-assign-filter]")) {
+      const k = e.target.dataset.colAssignFilter;
+      if (k === "month") assignMonth = e.target.value;
+      if (k === "salon") assignSalon = e.target.value;
+      if (k === "free") assignOnlyFree = e.target.checked;
+      renderColleagues();
+    }
     if (e.target.matches("#colCoverageForm select[name=colleague_id]")) onCoverageColleagueChange(e.target);
   });
   document.addEventListener("input", (e) => {

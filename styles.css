@@ -796,3 +796,26 @@ button.col-chip:hover { filter: brightness(1.15); }
 .col-activity-note span:first-child { white-space: pre-wrap; }
 .col-activity-btns { display: flex; gap: 6px; flex: none; }
 .col-mini-btn { padding: 6px 10px; font-size: 12px; min-height: 0; }
+.col-teams { margin: 0 0 16px; flex-wrap: wrap; }
+
+/* Colegas: repartir eventos */
+.col-modes { margin: 0 12px 16px 0; }
+.col-assign { display: grid; gap: 14px; }
+.col-assign-top { display: grid; gap: 10px; }
+.col-assign-top .col-help { margin: 0; }
+.col-assign-filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.col-assign-counts { display: flex; flex-wrap: wrap; gap: 6px; }
+.col-assign-list { display: grid; gap: 6px; }
+.col-assign-month { margin: 14px 0 4px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
+.col-assign-row { display: grid; grid-template-columns: 56px minmax(0, 1fr) minmax(200px, 280px); gap: 14px; align-items: center; padding: 10px 14px; border: 1px solid var(--line-2); border-radius: var(--radius); background: var(--surface-2); }
+.col-assign-row.free { border-color: rgba(251,191,36,.3); }
+.col-assign-date { text-align: center; display: grid; }
+.col-assign-date strong { color: var(--ink); font-size: 15px; }
+.col-assign-date span { color: var(--muted); font-size: 11px; text-transform: uppercase; }
+.col-assign-ev { display: grid; gap: 2px; min-width: 0; }
+.col-assign-ev .col-link { text-align: left; font-weight: 700; }
+.col-assign-ev small { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.col-assign-pick { display: grid; gap: 4px; }
+.col-assign-pick select { width: 100%; }
+.col-assign-pick small { color: var(--muted); font-size: 11px; }
+@media (max-width: 720px) { .col-assign-row { grid-template-columns: 48px minmax(0, 1fr); } .col-assign-pick { grid-column: 1 / -1; } }

@@ -95,11 +95,13 @@ h1{margin:6px 0 8px;font-size:24px}p{color:#c4b8d8;line-height:1.5;margin:0 0 18
 ul{list-style:none;padding:0;margin:0;display:grid;gap:10px}li{background:#1a1325;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:14px 16px}
 .d{color:#c9a84c;font-weight:700;font-size:13px}.t{font-weight:700;margin:4px 0 6px}.m{color:#c4b8d8;font-size:14px;margin-top:3px}.m a{color:#a78bfa}
 .drive{display:inline-block;margin-top:10px;padding:8px 12px;border-radius:10px;background:rgba(96,165,250,.14);color:#60a5fa;font-weight:700;font-size:14px;text-decoration:none}
-.empty{color:#7c6f94;text-align:center;padding:26px;border:1px dashed rgba(255,255,255,.12);border-radius:14px}
+button.btn{width:100%;font:inherit;font-weight:700;cursor:pointer}.hint{font-size:13px;color:#a99cbf;margin:12px 0 0}.empty{color:#7c6f94;text-align:center;padding:26px;border:1px dashed rgba(255,255,255,.12);border-radius:14px}
 </style></head><body><main>
 <p class="eyebrow">Tu calendario de coberturas</p><h1>Hola ${escapeHtml(colleague.name.split(/\s+/)[0])}!</h1>
 <p>Acá tenés los eventos que cubrís, con día, hora de llegada, lugar y la carpeta para subir las fotos. Agregalos a tu calendario una sola vez y se van a actualizar solos cuando haya cambios.</p>
-<div class="btns"><a class="btn primary" href="${escapeHtml(webcal)}">📱 Agregar en iPhone</a><a class="btn secondary" href="${escapeHtml(google)}" target="_blank" rel="noopener">📅 Agregar en Google Calendar</a></div>
+<div class="btns"><a class="btn primary" href="${escapeHtml(webcal)}">📱 Agregar en iPhone</a><a class="btn secondary" href="${escapeHtml(google)}" target="_blank" rel="noopener">📅 Agregar en Google Calendar</a><button class="btn secondary" type="button" id="copyCal" data-url="${escapeHtml(feed)}">🔗 Copiar link del calendario</button></div>
+<p class="hint">«Agregar en iPhone» funciona abriendo esta página <b>desde el iPhone</b> (en la compu no hace nada). En Android o en la compu usá Google Calendar. Para Outlook u otra app, copiá el link y agregalo como calendario «desde internet».</p>
+<script>document.getElementById("copyCal").addEventListener("click",async function(){var u=this.dataset.url;try{await navigator.clipboard.writeText(u);this.textContent="✔ Link copiado";}catch(e){prompt("Copiá este link:",u);}});</script>
 <h2>Próximos eventos</h2>
 ${rows ? `<ul>${rows}</ul>` : `<div class="empty">Por ahora no tenés eventos asignados.</div>`}
 </main></body></html>`;
