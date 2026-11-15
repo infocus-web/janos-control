@@ -656,6 +656,7 @@ function renderCalendar(){
     gcalByDay.get(day).push(e);
   });
   const cells=[];
+  const agenda=[]; // vista lista (celular): un día por fila, solo días con algo
   for(let i=0;i<startWeekday;i++)cells.push(`<div class="cal-cell empty"></div>`);
   for(let day=1;day<=daysInMonth;day++){
     const dateKey=`${calendarMonth}-${String(day).padStart(2,"0")}`;
@@ -665,6 +666,11 @@ function renderCalendar(){
     const gcalItems=(gcalByDay.get(day)||[]).filter(e=>!items.some(c=>gcalMatchesClient(e,c)));
     const gcalHtml=gcalItems.map(e=>`<div class="cal-gcal-event" title="${escapeHtml(e.title)}${e.time?' · '+e.time:''}${e.location?' · '+e.location:''}">${e.time?`<span class="cal-gcal-time">${e.time}</span>`:''}${escapeHtml(e.title)}</div>`).join("");
     cells.push(`<div class="cal-cell${dateKey===todayKey?" today":""}"><span class="cal-day">${day}</span>${items.map(c=>{const who=assignedForClient(c.id);const line=(label,names)=>`<span class="cal-event-who${names.length?"":" none"}"><b>${label}:</b> ${names.length?escapeHtml(names.join(", ")):"sin asignar"}</span>`;const tip=`${c.honoree} · ${c.salon||""} · Foto: ${who.foto.join(", ")||"sin asignar"} · Video: ${who.video.join(", ")||"sin asignar"}`;return `<button class="cal-event ${calendarSalonClass(c.salon,salons)}" data-open-client="${c.id}" title="${escapeHtml(tip)}">${escapeHtml(c.honoree)}${line("Foto",who.foto)}${line("Video",who.video)}</button>`;}).join("")}${gcalHtml}</div>`);
+    if(items.length||gcalItems.length){
+      const wd=new Intl.DateTimeFormat("es-AR",{weekday:"short"}).format(new Date(year,month-1,day)).replace(".","");
+      const evHtml=items.map(c=>{const who=assignedForClient(c.id);const part=(label,names)=>`<span class="cal-ag-who${names.length?"":" none"}"><b>${label}:</b> ${names.length?escapeHtml(names.join(", ")):"sin asignar"}</span>`;return `<button class="cal-event cal-ag-event ${calendarSalonClass(c.salon,salons)}" data-open-client="${c.id}"><span class="cal-ag-name">${escapeHtml(c.honoree)}<small>${escapeHtml(c.salon||"")}</small></span>${part("Foto",who.foto)}${part("Video",who.video)}</button>`;}).join("");
+      agenda.push(`<div class="cal-ag-row${dateKey===todayKey?" today":""}"><div class="cal-ag-day"><span>${wd}</span><strong>${day}</strong></div><div class="cal-ag-items">${evHtml}${gcalHtml}</div></div>`);
+    }
   }
   const trailing=(7-(cells.length%7))%7;
   for(let i=0;i<trailing;i++)cells.push(`<div class="cal-cell empty"></div>`);
@@ -686,7 +692,8 @@ function renderCalendar(){
     <div class="cal-grid">
       ${weekdays.map(w=>`<div class="cal-weekday">${w}</div>`).join("")}
       ${cells.join("")}
-    </div>`;
+    </div>
+    <div class="cal-agenda">${agenda.join("")||`<p class="muted">No hay eventos este mes.</p>`}</div>`;
 }
 function whatsappNumber(value){let digits=String(value||"").replace(/\D/g,"").replace(/^00/,"");if(!digits)return "";if(digits.startsWith("549"))return digits;if(digits.startsWith("54"))return `549${digits.slice(2)}`;if(digits.length>10)return digits;return `549${digits.replace(/^0/,"")}`;}
 // Varias personas pueden compartir el mismo login de Janos Control pero
