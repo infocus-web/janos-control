@@ -2299,5 +2299,7 @@ initColleagues({
   escapeHtml,money,dateText,toast,whatsappNumber,openWhatsappApp,driveAutoAvailable,
   openClientDetail,
   refreshClientDetail:(id)=>openClientDetail(id),
+  // Confirmar una tarea que una colega marcó como hecha desde su portal.
+  updateTask,
 });
 bootstrap();

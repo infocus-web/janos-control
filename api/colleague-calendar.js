@@ -30,7 +30,9 @@ function dayStamp(date, addDays = 0) { const [y, m, d] = date.split("-").map(Num
 function todayAr() { return new Date(Date.now() - TZ_OFFSET * 3600000).toISOString().slice(0, 10); }
 function dateLong(iso) { const s = new Intl.DateTimeFormat("es-AR", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" }).format(new Date(`${iso}T12:00:00Z`)); return s.charAt(0).toUpperCase() + s.slice(1); }
 
-function eventTitle(cv) { const c = cv.clients; return `${c.honoree || "Evento"}${c.event_type ? ` (${c.event_type})` : ""} · ${c.salon || ""}`.trim(); }
+// Fecha de la cobertura: la sesión de fotos tiene la suya (work_date).
+function covDate(cv) { return cv.work_date || cv.clients.event_date; }
+function eventTitle(cv) { const c = cv.clients; return `${cv.kind === "session" ? "📷 Sesión de fotos · " : ""}${c.honoree || "Evento"}${c.event_type ? ` (${c.event_type})` : ""} · ${c.salon || ""}`.trim(); }
 function driveLink(cv) { return cv.drive_shared_at && cv.clients.drive_url ? cv.clients.drive_url : ""; }
 
 export function buildCalendar(colleague, coverages) {
@@ -41,7 +43,7 @@ export function buildCalendar(colleague, coverages) {
     "REFRESH-INTERVAL;VALUE=DURATION:PT2H", "X-PUBLISHED-TTL:PT2H",
   ];
   for (const cv of coverages) {
-    const date = cv.clients.event_date;
+    const date = covDate(cv);
     if (!date) continue;
     const desc = [
       cv.arrival_time ? `Presentarse: ${hhmm(cv.arrival_time)} h${cv.end_time ? ` (hasta ${hhmm(cv.end_time)} h)` : ""}` : "",
@@ -74,9 +76,9 @@ export function buildPage(colleague, coverages, origin, token, today) {
   const feed = `${origin}/api/colleague-calendar?token=${token}`;
   const webcal = feed.replace(/^https?:/, "webcal:");
   const google = `https://calendar.google.com/calendar/r?cid=${encodeURIComponent(webcal)}`;
-  const upcoming = coverages.filter((cv) => cv.clients.event_date >= today);
+  const upcoming = coverages.filter((cv) => covDate(cv) >= today);
   const rows = upcoming.map((cv) => `<li>
-    <div class="d">${escapeHtml(dateLong(cv.clients.event_date))}</div>
+    <div class="d">${escapeHtml(dateLong(covDate(cv)))}</div>
     <div class="t">${escapeHtml(eventTitle(cv))}</div>
     <div class="m">${cv.arrival_time ? `🕒 ${hhmm(cv.arrival_time)} h${cv.end_time ? ` – ${hhmm(cv.end_time)} h` : ""}` : "🕒 Horario a confirmar"}${cv.role ? ` · ${escapeHtml(cv.role)}` : ""}</div>
     ${cv.location ? `<div class="m">📍 <a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(cv.location)}" target="_blank" rel="noopener">${escapeHtml(cv.location)}</a></div>` : ""}
@@ -124,11 +126,11 @@ export default async function handler(req, res) {
     const since = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
     const { data: rows, error: covError } = await admin
       .from("colleague_coverages")
-      .select("id,role,arrival_time,end_time,location,notes,updated_at,drive_shared_at,clients!inner(event_date,salon,honoree,event_type,drive_url)")
+      .select("id,kind,work_date,role,arrival_time,end_time,location,notes,updated_at,drive_shared_at,clients!inner(event_date,salon,honoree,event_type,drive_url)")
       .eq("colleague_id", colleague.id)
       .gte("clients.event_date", since);
     if (covError) throw covError;
-    const coverages = (rows || []).filter((r) => r.clients?.event_date).sort((a, b) => a.clients.event_date.localeCompare(b.clients.event_date) || hhmm(a.arrival_time).localeCompare(hhmm(b.arrival_time)));
+    const coverages = (rows || []).filter((r) => r.clients?.event_date).sort((a, b) => covDate(a).localeCompare(covDate(b)) || hhmm(a.arrival_time).localeCompare(hhmm(b.arrival_time)));
 
     if (req.query?.page) {
       res.status(200);

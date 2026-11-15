@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#0f0a18">
+<title>Mis eventos · Janos Control</title>
+<style>
+  :root { --gold:#c9a84c; --gold-2:#e8c97a; --gold-soft:rgba(201,168,76,.12); --gold-border:rgba(201,168,76,.28); --bg:#0f0a18; --panel:#1a1226; --panel-2:#221833; --line:rgba(255,255,255,.08); --ink:#f3eefb; --muted:#a99cbf; --ok:#3ecf8e; --warn:#f0b44c; --danger:#ef6b6b; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; background:var(--bg); color:var(--ink); font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; font-size:16px; -webkit-text-size-adjust:100%; }
+  button,input,textarea { font:inherit; color:inherit; }
+  a { color:var(--gold-2); }
+  .wrap { max-width:760px; margin:0 auto; padding:16px 16px 60px; }
+  .muted { color:var(--muted); }
+  .eyebrow { margin:0; color:var(--gold); font-size:12px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
+  .btn { border:1px solid var(--line); background:var(--panel-2); border-radius:10px; padding:10px 14px; cursor:pointer; min-height:44px; }
+  .btn:hover { border-color:var(--gold-border); }
+  .btn-primary { background:linear-gradient(135deg,var(--gold),#a87830); color:#1a1000; border:0; font-weight:700; }
+  .btn:disabled { opacity:.55; cursor:default; }
+  .btn:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus-visible { outline:2px solid var(--gold); outline-offset:2px; }
+  /* login */
+  .login { min-height:100vh; display:grid; place-items:center; padding:24px; background:radial-gradient(ellipse at top,#1e1030,var(--bg) 65%); }
+  .login form { width:100%; max-width:380px; background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:24px; display:grid; gap:14px; }
+  .login h1 { margin:4px 0 0; font-size:24px; }
+  label { display:grid; gap:6px; font-size:14px; color:var(--muted); }
+  input, textarea { width:100%; background:#140e1f; border:1px solid var(--line); border-radius:10px; padding:12px; color:var(--ink); }
+  textarea { resize:vertical; min-height:70px; }
+  .msg { margin:0; padding:10px 12px; border-radius:10px; font-size:14px; background:rgba(239,107,107,.12); color:#ffb3b3; border:1px solid rgba(239,107,107,.3); }
+  .msg:empty { display:none; }
+  /* app */
+  .top { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 0 16px; border-bottom:1px solid var(--line); }
+  .top h1 { margin:2px 0 0; font-size:22px; }
+  .top p { margin:4px 0 0; font-size:14px; }
+  .tabs { display:flex; gap:8px; margin:16px 0 8px; flex-wrap:wrap; }
+  .tab { border:1px solid var(--line); background:transparent; border-radius:999px; padding:8px 14px; cursor:pointer; min-height:40px; color:var(--muted); }
+  .tab.active { color:var(--gold); background:var(--gold-soft); border-color:var(--gold-border); }
+  .tab b { margin-left:4px; }
+  .toggle { display:flex; align-items:center; gap:8px; font-size:14px; color:var(--muted); margin:4px 0 12px; }
+  .toggle input { width:18px; height:18px; }
+  .month { margin:22px 0 8px; font-size:13px; color:var(--muted); text-transform:capitalize; letter-spacing:.04em; }
+  .event { background:var(--panel); border:1px solid var(--line); border-radius:14px; margin-bottom:10px; overflow:hidden; }
+  .event.mine { border-color:var(--gold-border); }
+  .event summary { list-style:none; cursor:pointer; padding:14px; display:grid; grid-template-columns:56px 1fr auto; gap:12px; align-items:center; }
+  .event summary::-webkit-details-marker { display:none; }
+  .date { text-align:center; background:var(--panel-2); border-radius:10px; padding:6px 0; }
+  .date strong { display:block; font-size:20px; line-height:1.1; }
+  .date span { font-size:11px; color:var(--muted); text-transform:uppercase; }
+  .ev-title { margin:0; font-size:16px; font-weight:700; }
+  .ev-sub { margin:3px 0 0; font-size:13px; color:var(--muted); }
+  .badge { display:inline-block; font-size:11px; padding:3px 8px; border-radius:999px; background:var(--gold-soft); color:var(--gold); border:1px solid var(--gold-border); white-space:nowrap; }
+  .badge.soft { background:transparent; color:var(--muted); border-color:var(--line); }
+  .body { padding:0 14px 16px; display:grid; gap:16px; }
+  .cover { background:var(--gold-soft); border:1px solid var(--gold-border); border-radius:12px; padding:12px; font-size:14px; display:grid; gap:4px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px 16px; margin:0; }
+  .grid dt { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
+  .grid dd { margin:2px 0 0; font-size:14px; word-break:break-word; }
+  .links { display:flex; gap:8px; flex-wrap:wrap; }
+  .links a { text-decoration:none; }
+  h3 { margin:0 0 8px; font-size:14px; color:var(--gold); }
+  .phase { font-size:12px; color:var(--muted); margin:10px 0 4px; }
+  .task { display:flex; align-items:flex-start; gap:10px; padding:8px 0; border-top:1px solid var(--line); font-size:14px; }
+  .task:first-of-type { border-top:0; }
+  .task input { width:22px; height:22px; margin:0; flex:none; accent-color:var(--gold); }
+  .task small { display:block; color:var(--muted); font-size:12px; margin-top:2px; }
+  .task.done span { color:var(--muted); text-decoration:line-through; }
+  .note { background:var(--panel-2); border-radius:10px; padding:10px 12px; font-size:14px; white-space:pre-wrap; display:grid; gap:6px; }
+  .note small { color:var(--muted); font-size:12px; display:flex; justify-content:space-between; gap:8px; }
+  .note button { background:none; border:0; color:var(--muted); cursor:pointer; padding:0; text-decoration:underline; }
+  .note-form { display:grid; gap:8px; margin-top:8px; }
+  .empty { text-align:center; padding:40px 16px; color:var(--muted); background:var(--panel); border:1px dashed var(--line); border-radius:14px; }
+  .toast { position:fixed; left:50%; bottom:20px; transform:translateX(-50%); background:#2a1f3d; border:1px solid var(--gold-border); padding:12px 16px; border-radius:12px; font-size:14px; z-index:10; max-width:90vw; }
+  .toast[hidden] { display:none; }
+  @media (max-width:420px) { .event summary { grid-template-columns:50px 1fr; } .event summary .badge { grid-column:2; justify-self:start; } }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<script>
+(() => {
+  const API = "/api/colleague-portal";
+  const KEY = "janos_colega_session";
+  const ADDONS = { pant:"Pantalla", miniflex:"Mini Flex", flex:"Flex", sansSouci:"Sans Souci", libro:"Libro Combo", maqui:"Maquillaje", maquiplus:"Maquillaje Plus", maquix2plus:"Maquillaje x2 Plus", moda:"Producción de Moda", drone:"Drone", vipExtras:"Extras VIP", glamCam:"Glam Cam", alfombraRoja:"Alfombra Roja", invitacion:"Invitación Interactiva", fotoIman:"Foto Imán", vipUpgrade:"Upgrade VIP", cere:"Ceremonia" };
+  const PACKS = { silver:"Silver", gold:"Golden / All Inclusive", vip:"VIP", informal:"Informal" };
+  const root = document.getElementById("root");
+  let session = null, state = null, tab = "mine", showPast = false, openIds = new Set(), loginError = "";
+
+  const esc = (v) => String(v ?? "").replace(/[&<>'"]/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", "'":"&#39;", '"':"&quot;" }[c]));
+  function load() { try { return JSON.parse(localStorage.getItem(KEY) || "null"); } catch { return null; } }
+  function save(s) { session = s; try { s ? localStorage.setItem(KEY, JSON.stringify(s)) : localStorage.removeItem(KEY); } catch {} }
+  function todayIso() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
+  function dt(iso) { return new Date(`${iso}T12:00:00`); }
+  function fmt(iso, opts) { return new Intl.DateTimeFormat("es-AR", opts).format(dt(iso)); }
+  function waLink(phone) { let d = String(phone || "").replace(/\D/g, ""); if (!d) return ""; if (!d.startsWith("54")) d = "549" + d.replace(/^0/, "").replace(/^15/, ""); return `https://wa.me/${d}`; }
+  let toastTimer;
+  function toast(msg) { const t = document.getElementById("toast"); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), 3500); }
+
+  async function call(action, payload = {}, retry = true) {
+    const headers = { "Content-Type": "application/json" };
+    if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
+    const res = await fetch(API, { method: "POST", headers, body: JSON.stringify({ action, ...payload }) });
+    const out = await res.json().catch(() => ({}));
+    if (res.status === 401 && retry && session?.refresh_token && action !== "login") {
+      const r = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "refresh", refresh_token: session.refresh_token }) });
+      const ro = await r.json().catch(() => ({}));
+      if (r.ok && ro.session) { save(ro.session); return call(action, payload, false); }
+      save(null); renderLogin("Tu sesión venció. Volvé a entrar."); throw new Error("session");
+    }
+    if (res.status === 403 && action !== "login") { save(null); renderLogin(out.error); throw new Error("session"); }
+    if (!res.ok) throw new Error(out.error || "Algo falló. Probá de nuevo.");
+    return out;
+  }
+
+  function renderLogin(msg = "") {
+    loginError = msg; state = null;
+    root.innerHTML = `<div class="login"><form id="loginForm" novalidate>
+      <div><p class="eyebrow">Janos Control · Colegas</p><h1>Mis eventos</h1></div>
+      <p class="muted" style="margin:0;font-size:14px">Entrá con tu Gmail y la contraseña que te pasó Pablo.</p>
+      <p class="msg" id="loginMsg" role="alert">${esc(loginError)}</p>
+      <label>Gmail<input name="email" type="email" autocomplete="username" inputmode="email" required></label>
+      <label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label>
+      <button class="btn btn-primary" type="submit">Entrar</button>
+    </form></div>`;
+  }
+
+  async function refresh() {
+    try { state = await call("data"); renderApp(); }
+    catch (e) { if (e.message !== "session") { root.innerHTML = `<div class="wrap"><div class="empty">${esc(e.message)}<br><br><button class="btn" data-act="reload">Reintentar</button></div></div>`; } }
+  }
+
+  // "Mis coberturas": un ítem por cada cosa que cubre (evento o sesión de
+  // fotos, cada una con su fecha). "Mi salón": un ítem por evento.
+  function itemsFor(which) {
+    const today = todayIso();
+    const items = which === "mine"
+      ? state.clients.flatMap((c) => c.coverages.map((cov) => ({ c, covs: [cov], date: cov.date, key: `${c.id}:${cov.kind}`, session: cov.kind === "session" })))
+      : state.clients.map((c) => ({ c, covs: c.coverages, date: c.event_date, key: `${c.id}:all`, session: false }));
+    return items
+      .filter((it) => (showPast ? it.date < today : it.date >= today))
+      .sort((a, b) => (showPast ? b.date.localeCompare(a.date) : a.date.localeCompare(b.date)) || String(a.covs[0]?.arrival || "").localeCompare(String(b.covs[0]?.arrival || "")));
+  }
+
+  function renderApp() {
+    const me = state.me, today = todayIso();
+    const mineCount = state.clients.flatMap((c) => c.coverages).filter((cv) => cv.date >= today).length;
+    const salonCount = state.clients.filter((c) => c.event_date >= today).length;
+    const list = itemsFor(tab);
+    let lastMonth = "";
+    const cards = list.map((it) => {
+      const m = it.date.slice(0, 7);
+      const head = m !== lastMonth ? `<h2 class="month">${esc(fmt(it.date, { month: "long", year: "numeric" }))}</h2>` : "";
+      lastMonth = m;
+      return head + eventHtml(it);
+    }).join("");
+    const salons = me.salons.length ? me.salons.join(", ") : "sin salón asignado";
+    root.innerHTML = `<div class="wrap">
+      <header class="top"><div><p class="eyebrow">Janos Control</p><h1>Hola, ${esc(String(me.name).split(" ")[0])}</h1><p class="muted">${esc(me.role || "Colega")} · ${esc(salons)}</p></div>
+        <button class="btn" data-act="logout">Salir</button></header>
+      <nav class="tabs" aria-label="Qué eventos ver">
+        <button class="tab ${tab === "mine" ? "active" : ""}" data-tab="mine" aria-pressed="${tab === "mine"}">Mis coberturas <b>${mineCount}</b></button>
+        <button class="tab ${tab === "all" ? "active" : ""}" data-tab="all" aria-pressed="${tab === "all"}">Todos los de mi salón <b>${salonCount}</b></button>
+      </nav>
+      <label class="toggle"><input type="checkbox" data-act="past" ${showPast ? "checked" : ""}> Ver eventos ya realizados (últimos 60 días)</label>
+      ${list.length ? cards : `<div class="empty">${tab === "mine" ? (showPast ? "No cubriste eventos en los últimos 60 días." : "Todavía no tenés coberturas asignadas.") : (me.salons.length ? "No hay eventos en tu salón." : "Todavía no tenés un salón asignado.")}</div>`}
+    </div>`;
+  }
+
+  function covHtml(c, cv) {
+    return `<div class="cover"><strong>${cv.kind === "session" ? "📷 Tu sesión de fotos" : "Tu cobertura del evento"}${cv.role ? ` · ${esc(cv.role)}` : ""}</strong>
+      <span>📅 ${esc(fmt(cv.date, { weekday: "long", day: "numeric", month: "long" }))}${cv.arrival ? ` · presentarte ${esc(cv.arrival)} h` : ""}${cv.end ? ` (hasta ${esc(cv.end)} h)` : ""}</span>
+      ${cv.location ? `<span>📍 <a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(cv.location)}" target="_blank" rel="noopener">${esc(cv.location)}</a></span>` : ""}${cv.notes ? `<span>📝 ${esc(cv.notes)}</span>` : ""}</div>`;
+  }
+
+  function eventHtml(it) {
+    const c = it.c;
+    const tasks = state.tasks.filter((t) => t.client_id === c.id).sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    const marks = new Map(state.marks.map((m) => [m.task_id, m]));
+    const notes = state.notes.filter((n) => n.client_id === c.id).sort((a, b) => a.created_at.localeCompare(b.created_at));
+    const open = openIds.has(it.key);
+    const cv = it.covs[0];
+    const addons = (Array.isArray(c.addons) ? c.addons : []).map((a) => ADDONS[a] || a);
+    const pendingCount = tasks.filter((t) => !["done", "na"].includes(t.status) && !marks.has(t.id)).length;
+    let lastPhase = "";
+    const taskHtml = tasks.filter((t) => t.status !== "na").map((t) => {
+      const mark = marks.get(t.id);
+      const done = t.status === "done";
+      const checked = done || Boolean(mark);
+      const locked = done || (mark && !mark.mine);
+      const info = done ? "Terminada" : mark ? `Marcada por ${mark.mine ? "vos" : mark.author_name} · falta que Pablo la confirme` : "";
+      const ph = t.phase && t.phase !== lastPhase ? `<p class="phase">${esc(t.phase)}</p>` : "";
+      lastPhase = t.phase;
+      return `${ph}<label class="task ${checked ? "done" : ""}"><input type="checkbox" data-task="${esc(t.id)}" ${checked ? "checked" : ""} ${locked ? "disabled" : ""}><span>${esc(t.title)}${info ? `<small>${esc(info)}</small>` : ""}${t.notes ? `<small>${esc(t.notes)}</small>` : ""}</span></label>`;
+    }).join("");
+    const badge = it.session ? "📷 Sesión de fotos" : it.covs.length ? (it.covs.some((x) => x.kind === "session") && it.covs.length === 1 ? "Cubrís la sesión" : "Cubrís vos") : "";
+    return `<details class="event ${it.covs.length ? "mine" : ""}" data-key="${esc(it.key)}" ${open ? "open" : ""}>
+      <summary>
+        <div class="date"><strong>${esc(fmt(it.date, { day: "numeric" }))}</strong><span>${esc(fmt(it.date, { weekday: "short" }))}</span></div>
+        <div><p class="ev-title">${it.session ? "Sesión · " : ""}${esc(c.honoree || "Evento")}</p><p class="ev-sub">${esc([c.event_type, c.salon, c.code ? `#${c.code}` : ""].filter(Boolean).join(" · "))}${it.session ? ` · evento ${esc(fmt(c.event_date, { day: "numeric", month: "short" }))}` : ""}${cv?.arrival ? ` · llegada ${esc(cv.arrival)} h` : ""}</p></div>
+        ${badge ? `<span class="badge">${esc(badge)}</span>` : pendingCount ? `<span class="badge soft">${pendingCount} pendientes</span>` : ""}
+      </summary>
+      <div class="body">
+        ${it.covs.map((x) => covHtml(c, x)).join("")}
+        <dl class="grid">
+          ${c.client_name ? `<div><dt>Cliente</dt><dd>${esc(c.client_name)}</dd></div>` : ""}
+          ${c.client_phone ? `<div><dt>Teléfono</dt><dd>${esc(c.client_phone)}</dd></div>` : ""}
+          ${c.client_email ? `<div><dt>Mail</dt><dd>${esc(c.client_email)}</dd></div>` : ""}
+          ${c.pack ? `<div><dt>Pack</dt><dd>${esc(PACKS[c.pack] || c.pack)}</dd></div>` : ""}
+          ${c.guests ? `<div><dt>Invitados</dt><dd>${esc(c.guests)}</dd></div>` : ""}
+          ${addons.length ? `<div><dt>Adicionales</dt><dd>${esc(addons.join(", "))}</dd></div>` : ""}
+        </dl>
+        ${c.notes ? `<div><h3>Notas del evento</h3><div class="note">${esc(c.notes)}</div></div>` : ""}
+        <div class="links">
+          ${c.drive_url ? `<a class="btn btn-primary" href="${esc(c.drive_url)}" target="_blank" rel="noopener">📁 Subir fotos y videos</a>` : cv ? `<span class="muted" style="font-size:13px">📁 La carpeta de Drive todavía no está lista.</span>` : ""}
+          ${c.whatsapp_group_url ? `<a class="btn" href="${esc(c.whatsapp_group_url)}" target="_blank" rel="noopener">💬 Grupo de WhatsApp</a>` : ""}
+          ${waLink(c.client_phone) ? `<a class="btn" href="${esc(waLink(c.client_phone))}" target="_blank" rel="noopener">WhatsApp al cliente</a>` : ""}
+        </div>
+        ${tasks.length ? `<div><h3>Tareas</h3>${taskHtml}</div>` : ""}
+        <div><h3>Mis notas</h3>
+          ${notes.map((n) => `<div class="note">${esc(n.body)}<small><span>${esc(new Intl.DateTimeFormat("es-AR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(n.created_at)))}</span><button type="button" data-unnote="${esc(n.id)}">Borrar</button></small></div>`).join("") || `<p class="muted" style="margin:0;font-size:14px">Las ven vos y Pablo.</p>`}
+          <form class="note-form" data-note="${esc(c.id)}"><label class="sr"><span class="muted" style="font-size:13px">Nueva nota</span><textarea name="body" maxlength="2000" rows="2" required></textarea></label><button class="btn" type="submit">Guardar nota</button></form>
+        </div>
+      </div>
+    </details>`;
+  }
+
+  root.addEventListener("toggle", (e) => {
+    const d = e.target.closest?.("details[data-key]"); if (!d) return;
+    d.open ? openIds.add(d.dataset.key) : openIds.delete(d.dataset.key);
+  }, true);
+
+  root.addEventListener("click", async (e) => {
+    const t = e.target.closest("[data-tab],[data-act],[data-unnote]"); if (!t) return;
+    if (t.dataset.tab) { tab = t.dataset.tab; renderApp(); return; }
+    if (t.dataset.act === "logout") { save(null); renderLogin(); return; }
+    if (t.dataset.act === "reload") { refresh(); return; }
+    if (t.dataset.unnote) {
+      if (!confirm("¿Borrar esta nota?")) return;
+      t.disabled = true;
+      try { await call("unnote", { noteId: t.dataset.unnote }); state.notes = state.notes.filter((n) => n.id !== t.dataset.unnote); renderApp(); toast("Nota borrada"); }
+      catch (err) { t.disabled = false; if (err.message !== "session") toast(err.message); }
+    }
+  });
+
+  root.addEventListener("change", async (e) => {
+    if (e.target.matches("[data-act=past]")) { showPast = e.target.checked; renderApp(); return; }
+    const box = e.target.closest("[data-task]"); if (!box) return;
+    const taskId = box.dataset.task, done = box.checked;
+    box.disabled = true;
+    try {
+      await call("mark", { taskId, done });
+      if (done) state.marks.push({ task_id: taskId, author_name: state.me.name, done_at: new Date().toISOString(), mine: true });
+      else state.marks = state.marks.filter((m) => m.task_id !== taskId);
+      renderApp(); toast(done ? "Marcada como hecha" : "Desmarcada");
+    } catch (err) { box.checked = !done; box.disabled = false; if (err.message !== "session") toast(err.message); }
+  });
+
+  root.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const btn = form.querySelector("button[type=submit]");
+    if (form.id === "loginForm") {
+      const f = new FormData(form);
+      btn.disabled = true; btn.textContent = "Entrando…";
+      try {
+        const out = await call("login", { email: f.get("email"), password: f.get("password") });
+        save(out.session); root.innerHTML = `<div class="wrap"><div class="empty">Cargando tus eventos…</div></div>`; refresh();
+      } catch (err) { document.getElementById("loginMsg").textContent = err.message; btn.disabled = false; btn.textContent = "Entrar"; }
+      return;
+    }
+    if (form.dataset.note) {
+      const body = String(new FormData(form).get("body") || "").trim(); if (!body) return;
+      btn.disabled = true;
+      try { const out = await call("note", { clientId: form.dataset.note, body }); state.notes.push(out.note); renderApp(); toast("Nota guardada"); }
+      catch (err) { btn.disabled = false; if (err.message !== "session") toast(err.message); }
+    }
+  });
+
+  session = load();
+  if (session?.access_token) { root.innerHTML = `<div class="wrap"><div class="empty">Cargando tus eventos…</div></div>`; refresh(); }
+  else renderLogin();
+})();
+</script>
+</body>
+</html>
