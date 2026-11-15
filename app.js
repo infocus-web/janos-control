@@ -583,7 +583,14 @@ function monthKey(value){return /^\d{4}-\d{2}/.test(String(value||""))?String(va
 function monthLabel(value){const [year,month]=String(value).split("-");if(!year||!month)return value;const label=new Intl.DateTimeFormat("es-AR",{month:"long",year:"numeric"}).format(new Date(Number(year),Number(month)-1,1));return label.charAt(0).toUpperCase()+label.slice(1);}
 function eventCountLabel(count){return `${count} ${count===1?"evento":"eventos"}`;}
 function shiftMonth(key,delta){const [y,m]=key.split("-").map(Number);const d=new Date(y,m-1+delta,1);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;}
-function calendarSalonClass(salon,salons){const idx=salons.indexOf(salon);return `cal-salon-${idx>=0?idx%4:4}`;}
+function calendarSalonClass(salon,salons){
+  // Mismos colores que las etiquetas de salón del resto de la app (salonTagClass).
+  const tag=salonTagClass(salon).trim();
+  if(tag)return tag.replace("salon-tag-","cal-salon-");
+  // Otros salones: colores que no se confundan con Quinta (verde agua) ni Pilar Hotel (violeta).
+  const others=salons.filter(s=>!salonTagClass(s));const idx=others.indexOf(salon);
+  return `cal-salon-${idx>=0?[0,2,4][idx%3]:4}`;
+}
 async function fetchGcalEvents(month) {
   if (!currentUser) return;
   gcalLoading = true;

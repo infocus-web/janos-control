@@ -449,6 +449,8 @@ legend { padding: 0 6px; }
 .cal-salon-2 { background: var(--blue-soft); border-left: 3px solid var(--blue); }
 .cal-salon-3 { background: var(--green-soft); border-left: 3px solid var(--green); }
 .cal-salon-4 { background: var(--surface-3); border-left: 3px solid var(--muted); }
+.cal-salon-quinta { background: rgba(45,212,191,.12); border-left: 3px solid #2dd4bf; }
+.cal-salon-pilarhotel { background: var(--purple-soft); border-left: 3px solid var(--purple-2); }
 
 /* ── SETTINGS ── */
 .settings-grid { display: flex; flex-direction: column; gap: 16px; }
