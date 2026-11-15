@@ -91,6 +91,9 @@ function clientById(id) { return deps.getClients().find((c) => c.id === id) || n
 function colleagueById(id) { return data.colleagues.find((c) => c.id === id) || null; }
 function coverageDate(cv) { return cv.work_date || clientById(cv.client_id)?.eventDate || ""; }
 function isSession(cv) { return cv?.kind === "session"; }
+// Deuda anterior: monto que se le debe sin evento asociado (client_id null).
+function isDebt(cv) { return cv?.kind === "debt"; }
+function debtLabel(cv) { return `Deuda anterior${cv.notes ? ` · ${cv.notes}` : ""}`; }
 function kindTag(cv) { return isSession(cv) ? "Sesión de fotos" : "Evento"; }
 // Sesión de fotos cargada en la ficha del cliente (app.js → client.photoSession).
 function photoSessionOf(client) { const ps = client?.photoSession; return ps && ps.date ? ps : null; }
@@ -141,7 +144,7 @@ function summary(colleague) {
   const gross = num(due.reduce((s, cv) => s + Number(cv.amount), 0));
   const discounts = data.discounts.filter((d) => d.colleague_id === colleague.id && discountRemaining(d) > 0);
   const nextCuotas = num(discounts.reduce((s, d) => s + suggestedInstallment(d), 0));
-  const upcoming = mine.filter((cv) => coverageDate(cv) >= today()).sort(byDate);
+  const upcoming = mine.filter((cv) => !isDebt(cv) && coverageDate(cv) >= today()).sort(byDate);
   const credit = advanceCredit(colleague.id);
   const afterCuotas = num(Math.max(0, gross - Math.min(gross, nextCuotas)));
   return {
@@ -155,7 +158,9 @@ function summary(colleague) {
 
 function owedDetail(s) {
   const parts = [];
-  if (s.due.length) parts.push(`${s.due.length} ${s.due.length === 1 ? "evento" : "eventos"} sin pagar (${money(s.gross)})`);
+  const dueJobs = s.due.filter((cv) => !isDebt(cv)), dueDebt = num(s.due.filter(isDebt).reduce((t, cv) => t + Number(cv.amount), 0));
+  if (dueJobs.length) parts.push(`${dueJobs.length} ${dueJobs.length === 1 ? "evento" : "eventos"} sin pagar (${money(num(s.gross - dueDebt))})`);
+  if (dueDebt > 0) parts.push(`deuda anterior ${money(dueDebt)}`);
   if (s.gross !== s.afterCuotas) parts.push(`− ${money(num(s.gross - s.afterCuotas))} de cuota`);
   if (s.credit > 0) parts.push(s.net > 0 || s.gross ? `− ${money(Math.min(s.credit, s.afterCuotas))} ya dado a cuenta` : `${money(s.credit)} dado a cuenta`);
   if (s.credit > s.afterCuotas && s.afterCuotas > 0) parts.push(`le queda a favor ${money(num(s.credit - s.afterCuotas))}`);
@@ -246,7 +251,7 @@ export function renderColleagues() {
   const list = teamColleagues.filter((c) => showInactive || c.active);
   const sums = teamColleagues.filter((c) => c.active).map(summary);
   const totalOwed = num(sums.reduce((s, x) => s + x.net, 0));
-  const upcomingCount = data.coverages.filter((cv) => teamIds.has(cv.colleague_id) && coverageDate(cv) >= today()).length;
+  const upcomingCount = data.coverages.filter((cv) => !isDebt(cv) && teamIds.has(cv.colleague_id) && coverageDate(cv) >= today()).length;
   const discountLeft = num(sums.reduce((s, x) => s + x.discountLeft, 0));
   const inactiveCount = teamColleagues.filter((c) => !c.active).length;
   // Selector "Panel de" en el encabezado, al lado del título "Colegas".
@@ -343,7 +348,7 @@ function replacementsHtml() {
       const who = colleagueById(cv.colleague_id), cl = clientById(cv.client_id), day = coverageDate(cv);
       const opts = people.filter((p) => p.id !== cv.colleague_id).map((p) => {
         const off = unavailableOn(p.id, day);
-        const busy = data.coverages.some((x) => x.colleague_id === p.id && x.id !== cv.id && coverageDate(x) === day);
+        const busy = data.coverages.some((x) => !isDebt(x) && x.colleague_id === p.id && x.id !== cv.id && coverageDate(x) === day);
         return `<option value="${p.id}" ${off ? "disabled" : ""}>${esc(p.name)}${isExternal(p) ? " (externo)" : ""}${off ? " · 🚫 no disponible" : busy ? " · ya tiene otro trabajo" : ""}</option>`;
       }).join("");
       return `<div class="col-repl-row">
@@ -477,7 +482,7 @@ function distributorHtml() {
     .filter((it) => !assignOnlyFree || !teamCoverages(it.client.id, team, kind).length);
   // Quién ya trabaja cada día (para avisar si se superpone).
   const busy = new Map();
-  data.coverages.forEach((cv) => { const d = coverageDate(cv); if (!busy.has(d)) busy.set(d, new Map()); busy.get(d).set(cv.colleague_id, `${cv.client_id}:${cv.kind || "event"}`); });
+  data.coverages.filter((cv) => !isDebt(cv)).forEach((cv) => { const d = coverageDate(cv); if (!busy.has(d)) busy.set(d, new Map()); busy.get(d).set(cv.colleague_id, `${cv.client_id}:${cv.kind || "event"}`); });
   const counts = new Map(people.map((p) => [p.id, 0]));
   let free = 0;
   rows.forEach((it) => { const cvs = teamCoverages(it.client.id, team, kind); if (!cvs.length) free++; cvs.forEach((cv) => counts.set(cv.colleague_id, (counts.get(cv.colleague_id) || 0) + 1)); });
@@ -1207,7 +1212,7 @@ function paymentMessage(p) {
     return [`Hola ${firstName(c?.name)}! Te pagué ${money(p.net)} a cuenta (${deps.dateText(p.paid_on)}).`, p.notes || null, s ? `Te queda por cobrar: ${money(s.net)}` : null].filter(Boolean).join("\n");
   }
   const lines = [`Hola ${firstName(c?.name)}! Te pagué ${money(p.net)} (${deps.dateText(p.paid_on)}). Detalle:`, ""];
-  covers.forEach((cv) => { const cl = clientById(cv.client_id); lines.push(`• ${cl ? `${deps.dateText(coverageDate(cv))} ${isSession(cv) ? "Sesión " : ""}${cl.honoree}` : "Evento"}: ${money(cv.amount)}`); });
+  covers.forEach((cv) => { const cl = clientById(cv.client_id); lines.push(`• ${isDebt(cv) ? debtLabel(cv) : cl ? `${deps.dateText(coverageDate(cv))} ${isSession(cv) ? "Sesión " : ""}${cl.honoree}` : "Evento"}: ${money(cv.amount)}`); });
   apps.forEach((a) => {
     const d = data.discounts.find((x) => x.id === a.discount_id);
     lines.push(`• Descuento ${d ? `${d.description}${d.installments > 1 ? ` (cuota ${installmentNumber(d, p.id)}/${d.installments})` : ""}` : ""}: −${money(a.amount)}`);
@@ -1227,6 +1232,7 @@ function openColleagueDetail(id) {
   const discounts = data.discounts.filter((d) => d.colleague_id === id);
   const payments = data.payments.filter((p) => p.colleague_id === id).sort((a, b) => String(b.paid_on).localeCompare(String(a.paid_on)) || String(b.created_at).localeCompare(String(a.created_at)));
   const coverRow = (cv) => {
+    if (isDebt(cv)) return `<tr><td>${esc(deps.dateText(coverageDate(cv)))}</td><td>💰 ${esc(debtLabel(cv))}</td><td></td><td></td><td class="num">${money(cv.amount)}</td><td>${cv.payment_id ? `<span class="col-chip ok">Pagado</span>` : `<span class="col-chip warn">Por pagar</span> <button class="icon-btn col-mini" title="Borrar esta deuda" aria-label="Borrar deuda anterior" data-col="del-debt" data-id="${cv.id}">×</button>`}</td></tr>`;
     const cl = clientById(cv.client_id);
     const st = cv.payment_id ? `<span class="col-chip ok">Pagado</span>` : isDue(cv) ? `<span class="col-chip warn">Por pagar</span>` : `<span class="col-chip">Próximo</span>`;
     return `<tr><td>${cl ? esc(deps.dateText(coverageDate(cv))) : "—"}</td><td><button class="col-link" data-col="open-event" data-id="${cv.client_id}">${cl ? `${isSession(cv) ? "📷 Sesión · " : ""}${esc(cl.honoree)} <small>#${esc(cl.code)} · ${esc(cl.salon)}</small>` : "Evento borrado"}</button></td><td>${esc(cv.role || "")}</td><td>${cv.arrival_time ? `${hhmm(cv.arrival_time)} h` : ""}</td><td class="num">${money(cv.amount)}</td><td>${st}</td></tr>`;
@@ -1239,6 +1245,7 @@ function openColleagueDetail(id) {
         <button class="secondary-btn" data-col="advance" data-id="${id}">💵 Pago a cuenta</button>
         <button class="primary-btn" data-col="pay" data-id="${id}">Registrar pago</button>
         <button class="secondary-btn" data-col="add-discount" data-id="${id}">+ Descuento</button>
+        <button class="secondary-btn" data-col="add-debt" data-id="${id}" title="Plata que le debés de trabajos anteriores, sin elegir eventos">+ Deuda anterior</button>
         <button class="secondary-btn" data-col="calendar" data-id="${id}" ${c.active ? "" : "disabled"}>📅 Calendario</button>
         <button class="ghost-btn" data-col="edit-colleague" data-id="${id}">✎ Editar</button>
       </div>
@@ -1251,6 +1258,46 @@ function openColleagueDetail(id) {
     ${payments.length ? `<div class="col-table-wrap"><table class="col-table"><thead><tr><th>Fecha</th><th>Eventos</th><th class="num">Bruto</th><th class="num">Descuentos</th><th class="num">Pagado</th><th></th></tr></thead><tbody>${payments.map((p) => `<tr><td>${esc(deps.dateText(p.paid_on))}${p.notes ? `<small class="col-sub">${esc(p.notes)}</small>` : ""}</td><td>${p.kind === "advance" ? `<span class="col-chip">💵 A cuenta</span>` : data.coverages.filter((cv) => cv.payment_id === p.id).length}</td><td class="num">${p.kind === "advance" ? "—" : money(p.gross)}</td><td class="num">${[Number(p.discounts) ? `−${money(p.discounts)}` : "", Number(p.advance_used) ? `−${money(p.advance_used)} a cuenta` : ""].filter(Boolean).join("<br>") || "—"}</td><td class="num"><strong>${money(p.net)}</strong></td><td class="col-row-actions"><button class="icon-btn col-mini" title="Mandar el detalle por WhatsApp" data-col="wa-payment" data-id="${p.id}">💬</button><button class="ghost-btn col-undo" data-col="undo-payment" data-id="${p.id}">Deshacer</button></td></tr>`).join("")}</tbody></table></div>` : `<p class="col-empty">Todavía no le registraste pagos.</p>`}
     ${c.notes ? `<p class="col-notes">📝 ${esc(c.notes)}</p>` : ""}
   </div>`);
+}
+
+// ── deuda anterior (sin evento) ───────────────────────────────────────────
+function openDebtForm(colleagueId) {
+  const c = colleagueById(colleagueId); if (!c) return;
+  showDialog("colFormDialog", `<form id="colDebtForm" data-colleague="${colleagueId}">
+    ${head(c.name, "Deuda anterior", "colFormDialog")}
+    <p class="col-help">Para lo que le debés de trabajos ya hechos cuando no sabés (o no importa) a qué eventos corresponde. Se suma a <b>«Le debés»</b> y lo pagás con «Registrar pago», todo junto o en partes con «Pago a cuenta».</p>
+    <div class="form-grid">
+      <label>Monto<input name="amount" required type="number" min="1" step="1" inputmode="numeric" placeholder="Ej. 451900"></label>
+      <label>Fecha<input name="work_date" type="date" required value="${esc(today())}" max="${esc(today())}"></label>
+      <label class="full-label">Detalle <small>(opcional)</small><input name="notes" maxlength="120" placeholder="Ej. Eventos anteriores a noviembre"></label>
+    </div>
+    <div class="modal-actions">
+      <button class="secondary-btn" type="button" data-col="close" data-id="colFormDialog">Cancelar</button>
+      <button class="primary-btn" type="submit">Guardar deuda</button>
+    </div>
+  </form>`);
+}
+async function saveDebtForm(form) {
+  const c = colleagueById(form.dataset.colleague); if (!c) return;
+  const f = new FormData(form);
+  const amount = num(f.get("amount"));
+  const workDate = String(f.get("work_date") || "") || today();
+  if (amount <= 0) { toast("Poné el monto que le debés."); return; }
+  if (workDate > today()) { toast("La fecha no puede ser futura."); return; }
+  await withBusy(form, async () => {
+    const row = { client_id: null, colleague_id: c.id, kind: "debt", team: teamOf(c), amount, work_date: workDate, notes: String(f.get("notes") || "").trim() || null };
+    const [saved] = await run(supabase.from("colleague_coverages").insert(row).select());
+    data.coverages = [...data.coverages, saved];
+    closeDialog("colFormDialog"); toast(`Deuda anterior de ${money(amount)} cargada a ${c.name}`); refreshAll();
+  });
+}
+async function deleteDebt(id) {
+  const cv = data.coverages.find((x) => x.id === id); if (!cv || !isDebt(cv)) return;
+  if (cv.payment_id) { toast("Ya está incluida en un pago: primero deshacé ese pago.", 6000); return; }
+  if (!confirm(`¿Borrar la deuda anterior de ${money(cv.amount)}?`)) return;
+  await run(supabase.from("colleague_coverages").delete().eq("id", id));
+  data.coverages = data.coverages.filter((x) => x.id !== id);
+  toast("Deuda borrada"); refreshAll();
 }
 
 // ── descuentos ────────────────────────────────────────────────────────────
@@ -1317,7 +1364,7 @@ function openPaymentForm(colleagueId) {
     ${head(c.name, "Registrar pago", "colFormDialog")}
     <div class="col-pay-switch"><span>¿Le das solo una parte o un adelanto?</span><button class="secondary-btn col-mini-btn" type="button" data-col="advance" data-id="${colleagueId}">💵 Registrar pago a cuenta</button></div>
     ${unpaid.length ? `<p class="col-label">Eventos que le pagás <small>(los futuros vienen sin marcar)</small></p>
-    <div class="col-pay-list">${unpaid.map((cv) => { const cl = clientById(cv.client_id); return `<label class="col-pay-item"><input type="checkbox" name="coverage" value="${cv.id}" data-amount="${Number(cv.amount)}" ${isDue(cv) ? "checked" : ""}><span>${cl ? `${esc(deps.dateText(coverageDate(cv)))} · ${isSession(cv) ? "Sesión · " : ""}${esc(cl.honoree)}` : "Evento"}${isDue(cv) ? "" : ` <em>· próximo</em>`}</span><strong>${money(cv.amount)}</strong></label>`; }).join("")}</div>` : ""}
+    <div class="col-pay-list">${unpaid.map((cv) => { const cl = clientById(cv.client_id); return `<label class="col-pay-item"><input type="checkbox" name="coverage" value="${cv.id}" data-amount="${Number(cv.amount)}" ${isDue(cv) ? "checked" : ""}><span>${isDebt(cv) ? esc(debtLabel(cv)) : cl ? `${esc(deps.dateText(coverageDate(cv)))} · ${isSession(cv) ? "Sesión · " : ""}${esc(cl.honoree)}` : "Evento"}${isDue(cv) ? "" : ` <em>· próximo</em>`}</span><strong>${money(cv.amount)}</strong></label>`; }).join("")}</div>` : ""}
     ${discounts.length ? `<p class="col-label">Descuentos de este pago</p>
     <div class="col-pay-list">${discounts.map((d) => `<label class="col-pay-item col-pay-disc"><span>${esc(d.description)} <em>· resta ${money(discountRemaining(d))}${d.installments > 1 ? ` · cuota sugerida ${money(suggestedInstallment(d))}` : ""}</em></span><input type="number" name="discount" data-id="${d.id}" min="0" max="${discountRemaining(d)}" step="1" value="${suggestedInstallment(d)}"></label>`).join("")}</div>` : ""}
     ${credit > 0 ? `<p class="col-label">Pagos a cuenta que ya le diste</p>
@@ -1514,6 +1561,8 @@ const ACTIONS = {
   pay: (id) => openPaymentForm(id),
   advance: (id) => openAdvanceForm(id),
   "add-discount": (id) => openDiscountForm(id),
+  "add-debt": (id) => openDebtForm(id),
+  "del-debt": (id) => deleteDebt(id),
   "del-discount": (id) => deleteDiscount(id),
   "edit-discount": (id) => { const d = data.discounts.find((x) => x.id === id); if (d) openDiscountForm(d.colleague_id, d); },
   "undo-payment": (id) => undoPayment(id),
@@ -1598,7 +1647,7 @@ export function initColleagues(dependencies) {
     }
   });
   document.addEventListener("submit", (e) => {
-    const handlers = { colAdvanceForm: saveAdvanceForm, colExternalForm: saveExternalForm, colColleagueForm: saveColleagueForm, colCoverageForm: saveCoverageForm, colDiscountForm: saveDiscountForm, colPaymentForm: savePaymentForm };
+    const handlers = { colAdvanceForm: saveAdvanceForm, colExternalForm: saveExternalForm, colColleagueForm: saveColleagueForm, colCoverageForm: saveCoverageForm, colDiscountForm: saveDiscountForm, colDebtForm: saveDebtForm, colPaymentForm: savePaymentForm };
     const handler = handlers[e.target.id];
     if (!handler) return;
     e.preventDefault();

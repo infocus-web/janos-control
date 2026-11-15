@@ -60,7 +60,7 @@ async function loadPay(admin, colleague) {
   const today = todayAr();
   const sinceSix = new Date(Date.now() - 3 * 3600000 - 183 * 86400000).toISOString().slice(0, 10);
   const [{ data: covs, error: e1 }, { data: pays, error: e2 }, { data: discs, error: e3 }] = await Promise.all([
-    admin.from("colleague_coverages").select("id,kind,work_date,amount,payment_id,clients!inner(event_date,honoree,event_type,salon)").eq("colleague_id", colleague.id),
+    admin.from("colleague_coverages").select("id,kind,work_date,amount,payment_id,notes,clients(event_date,honoree,event_type,salon)").eq("colleague_id", colleague.id),
     admin.from("colleague_payments").select("id,kind,paid_on,gross,discounts,net,advance_used,notes,created_at").eq("colleague_id", colleague.id).order("paid_on", { ascending: false }),
     admin.from("colleague_discounts").select("id,description,total_amount,installments,created_on").eq("colleague_id", colleague.id),
   ]);
@@ -72,7 +72,8 @@ async function loadPay(admin, colleague) {
     if (error) throw error; apps = data || [];
   }
   const n = (v) => Math.round((Number(v) || 0) * 100) / 100;
-  const jobs = (covs || []).map((cv) => ({ id: cv.id, kind: cv.kind || "event", date: cv.work_date || cv.clients.event_date, honoree: cv.clients.honoree, type: cv.clients.event_type, salon: cv.clients.salon, amount: n(cv.amount), paymentId: cv.payment_id }));
+  // La "deuda anterior" (kind debt) no tiene evento: se muestra con su detalle.
+  const jobs = (covs || []).filter((cv) => cv.clients || cv.kind === "debt").map((cv) => ({ id: cv.id, kind: cv.kind || "event", date: cv.work_date || cv.clients?.event_date, honoree: cv.kind === "debt" ? `Deuda anterior${cv.notes ? ` · ${cv.notes}` : ""}` : cv.clients.honoree, type: cv.clients?.event_type || "", salon: cv.clients?.salon || "", amount: n(cv.amount), paymentId: cv.payment_id }));
   const unpaid = jobs.filter((j) => !j.paymentId);
   const due = unpaid.filter((j) => j.date <= today);
   const gross = n(due.reduce((s, j) => s + j.amount, 0));
