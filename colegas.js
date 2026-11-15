@@ -810,6 +810,22 @@ function taskKeysFieldset(selected = []) {
   </details>`;
 }
 
+// Al cambiar la forma de pago, el % o la tarea de editar, se recalculan los
+// trabajos sin pagar que tenían el monto automático (los cambiados a mano no se tocan).
+async function refreshPendingFees(before, after) {
+  if (!before || !after) return;
+  const changes = data.coverages.filter((cv) => cv.colleague_id === after.id && !cv.payment_id && !isDebt(cv) && cv.client_id).map((cv) => {
+    const date = isSession(cv) ? coverageDate(cv) : "";
+    return { cv, old: feeFor(before, cv.client_id, cv.kind || "event", date), now: feeFor(after, cv.client_id, cv.kind || "event", date) };
+  }).filter((x) => x.now !== x.old && num(x.cv.amount) === num(x.old));
+  if (!changes.length) return;
+  if (!confirm(`¿Actualizar el monto de ${changes.length} ${changes.length === 1 ? "trabajo" : "trabajos"} sin pagar de ${after.name} con la tarifa nueva?\n\n${changes.slice(0, 8).map((x) => `• ${clientById(x.cv.client_id)?.honoree || "Evento"}: ${money(x.old)} → ${money(x.now)}`).join("\n")}`)) return;
+  for (const x of changes) {
+    const [saved] = await run(supabase.from("colleague_coverages").update({ amount: x.now }).eq("id", x.cv.id).select());
+    data.coverages = data.coverages.map((c) => (c.id === x.cv.id ? saved : c));
+  }
+}
+
 // ── pago: tarifa fija o % de lo que se cobra por la cobertura ─────────────
 function isPercent(c) { return c?.pay_mode === "percent" && Number(c.pay_percent) > 0; }
 // Lo que se cobra por la cobertura de ese trabajo (tarifa vigente a la fecha).
@@ -823,17 +839,32 @@ function coverageBase(clientId, kind = "event", colleague = null, date = "") {
   const rateKey = task?.rateKey || (kind === "session" ? "book" : "eventCoverage");
   return num(deps.getRate ? deps.getRate(rateKey, date || client.eventDate) : 0);
 }
+// Si a la persona le asignaste la tarea de editar (en su ficha) y el evento
+// incluye edición, también cobra su % sobre lo que se cobra por la edición.
+const EDIT_TASK_KEYS = ["coveragePhotoEdit", "coverageVideoEdit"];
+function editsEvents(colleague) { return (colleague?.task_keys || []).some((k) => EDIT_TASK_KEYS.includes(k)); }
+function editBase(clientId, colleague, date = "") {
+  const client = clientById(clientId); if (!client || !editsEvents(colleague)) return 0;
+  const video = /vide/i.test(colleague?.role || "");
+  const order = video ? ["coverageVideoEdit", "coveragePhotoEdit"] : ["coveragePhotoEdit", "coverageVideoEdit"];
+  const key = order.find((k) => colleague.task_keys.includes(k) && (client.tasks || []).some((t) => t.key === k));
+  if (!key) return 0;
+  const task = client.tasks.find((t) => t.key === key);
+  return num(deps.getRate ? deps.getRate(task.rateKey || "eventEdit", date || client.eventDate) : 0);
+}
 function pctHelp(pct) {
   const base = num(deps.getRate ? deps.getRate("eventCoverage", today()) : 0);
-  return `Se calcula sobre lo que cobrás por la cobertura de cada evento (hoy ${money(base)})${pct ? `: ${pct}% = ${money(Math.round(base * pct / 100))} por evento` : ""}. Al asignarle un evento se usa la tarifa vigente a la fecha de ese evento.`;
+  const edit = num(deps.getRate ? deps.getRate("eventEdit", today()) : 0);
+  return `Se calcula sobre lo que cobrás por la cobertura de cada evento (hoy ${money(base)})${pct ? `: ${pct}% = ${money(Math.round(base * pct / 100))} por evento` : ""}. Si le asignás la tarea «Editar fotos/video del evento», cobra además su % de la edición (hoy ${money(edit)}${pct ? ` → ${money(Math.round(edit * pct / 100))}` : ""}). Al asignarle un evento se usa la tarifa vigente a la fecha de ese evento.`;
 }
 // Monto a pagarle a esa persona por ese trabajo.
 function feeFor(colleague, clientId, kind = "event", date = "") {
   if (!colleague) return 0;
   if (!isPercent(colleague)) return num(colleague.default_fee);
-  return Math.round(coverageBase(clientId, kind, colleague, date) * Number(colleague.pay_percent) / 100);
+  const edit = kind === "event" ? editBase(clientId, colleague, date) : 0;
+  return Math.round((coverageBase(clientId, kind, colleague, date) + edit) * Number(colleague.pay_percent) / 100);
 }
-function payLabel(c) { return isPercent(c) ? `${Number(c.pay_percent)}% de la cobertura` : money(c.default_fee); }
+function payLabel(c) { return isPercent(c) ? `${Number(c.pay_percent)}% de la cobertura${editsEvents(c) ? " + edición" : ""}` : money(c.default_fee); }
 
 function salonOptions(selected = []) {
   const set = new Set([...(selected || []), ...deps.getClients().map((c) => c.salon).filter(Boolean)]);
@@ -897,8 +928,10 @@ async function saveColleagueForm(form) {
   if (id) row.active = f.get("active") === "on";
   await withBusy(form, async () => {
     if (id) {
+      const before = colleagueById(id);
       const [saved] = await run(supabase.from("colleagues").update(row).eq("id", id).select());
       data.colleagues = data.colleagues.map((c) => (c.id === id ? saved : c));
+      await refreshPendingFees(before, saved);
     } else {
       const [saved] = await run(supabase.from("colleagues").insert(row).select());
       data.colleagues = [...data.colleagues, saved].sort((a, b) => a.name.localeCompare(b.name));
