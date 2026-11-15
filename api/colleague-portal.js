@@ -21,7 +21,7 @@ import { createClient } from "@supabase/supabase-js";
 //    toca tasks ni clients: el dueño confirma desde su app).
 
 const PAST_DAYS = 60;
-const CLIENT_FIELDS = "id,code,event_date,salon,event_type,honoree,client_name,client_phone,client_email,guests,pack,addons,notes,whatsapp_group_url,drive_url";
+const CLIENT_FIELDS = "id,code,event_date,event_time,salon,event_type,honoree,client_name,client_phone,client_email,guests,pack,addons,notes,whatsapp_group_url,drive_url";
 const TASK_FIELDS = "id,client_id,title,phase,status,completed_at,responsible,notes,sort_order";
 
 function send(res, status, body) {
@@ -93,6 +93,7 @@ async function loadData(admin, colleague) {
       const mine = coverages.filter((cv) => cv.client_id === c.id);
       return {
         ...c,
+        event_time: hhmm(c.event_time),
         // La carpeta solo sirve si ya se la compartieron (si no, no tiene permiso).
         drive_url: mine.some((cv) => cv.drive_shared_at) ? c.drive_url : null,
         // Evento y/o sesión de fotos que cubre ella (la sesión tiene su fecha).

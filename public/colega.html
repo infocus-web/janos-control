@@ -218,6 +218,7 @@
       <div class="body">
         ${it.covs.map((x) => covHtml(c, x)).join("")}
         <dl class="grid">
+          ${c.event_time ? `<div><dt>Inicio del evento</dt><dd>${esc(c.event_time)} h</dd></div>` : ""}
           ${c.client_name ? `<div><dt>Cliente</dt><dd>${esc(c.client_name)}</dd></div>` : ""}
           ${c.client_phone ? `<div><dt>Teléfono</dt><dd>${esc(c.client_phone)}</dd></div>` : ""}
           ${c.client_email ? `<div><dt>Mail</dt><dd>${esc(c.client_email)}</dd></div>` : ""}

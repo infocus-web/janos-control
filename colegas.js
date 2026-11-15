@@ -37,6 +37,17 @@ const MODE_KEY = "janos_colegas_mode";
 let colMode = (() => { try { return localStorage.getItem(MODE_KEY) === "assign" ? "assign" : "team"; } catch { return "team"; } })();
 let assignMonth = "", assignSalon = "", assignOnlyFree = false;
 let openColleagueId = null;
+// Hora de inicio de cada evento (clients.event_time). La app principal no la
+// usa ni la pisa al guardar (no está entre las columnas que sincroniza).
+let eventTimes = new Map();
+const ARRIVAL_BEFORE_MIN = 90; // el personal se presenta 90 minutos antes
+function eventTimeOf(clientId) { return eventTimes.get(clientId) || ""; }
+function minusMinutes(hm, mins) {
+  const [h, m] = String(hm).split(":").map(Number);
+  const t = (((h * 60 + m - mins) % 1440) + 1440) % 1440;
+  return `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+}
+function suggestedArrival(clientId) { const t = eventTimeOf(clientId); return t ? minusMinutes(t, ARRIVAL_BEFORE_MIN) : ""; }
 
 function emptyData() { return { colleagues: [], coverages: [], payments: [], discounts: [], applications: [], notes: [], marks: [] }; }
 
@@ -135,6 +146,8 @@ export async function loadColleagues() {
       // colleague_task_marks no tiene columna id (la clave es task_id).
       run(supabase.from("colleague_task_marks").select("*").order("done_at").limit(5000)),
     ]);
+    const times = await run(supabase.from("clients").select("id,event_time").not("event_time", "is", null).limit(5000));
+    eventTimes = new Map((times || []).map((r) => [r.id, hhmm(r.event_time)]));
     data = { colleagues, coverages, payments, discounts, applications, notes: notes || [], marks: marks || [] };
     status = "ready";
   } catch (err) {
@@ -223,6 +236,33 @@ function cardHtml(c) {
   </article>`;
 }
 
+// Guarda la hora de inicio del evento y acomoda la llegada del personal que
+// no tenía horario (o tenía el calculado con la hora anterior).
+async function setEventTime(clientId, value) {
+  const prevArrival = suggestedArrival(clientId);
+  await run(supabase.from("clients").update({ event_time: value || null }).eq("id", clientId).select("id"));
+  if (value) eventTimes.set(clientId, value); else eventTimes.delete(clientId);
+  if (!value) return [];
+  const arrival = minusMinutes(value, ARRIVAL_BEFORE_MIN);
+  const fixed = [];
+  for (const cv of data.coverages.filter((x) => x.client_id === clientId && (x.kind || "event") === "event" && (!x.arrival_time || hhmm(x.arrival_time) === prevArrival) && hhmm(x.arrival_time) !== arrival)) {
+    const [saved] = await run(supabase.from("colleague_coverages").update({ arrival_time: arrival }).eq("id", cv.id).select());
+    if (saved) { data.coverages = data.coverages.map((x) => (x.id === cv.id ? saved : x)); fixed.push(saved); }
+  }
+  return fixed;
+}
+async function onEventTimeInput(input) {
+  const clientId = input.dataset.colEventTime;
+  const client = clientById(clientId);
+  input.disabled = true;
+  try {
+    const fixed = await setEventTime(clientId, input.value);
+    toast(input.value ? `Inicio ${input.value} h · el personal llega ${minusMinutes(input.value, ARRIVAL_BEFORE_MIN)} h` : "Horario borrado");
+    for (const cv of fixed) await notifyChange({ client, cv, changed: colleagueById(cv.colleague_id), offerWa: fixed.length === 1 });
+  } catch (err) { console.error(err); toast(friendlyError(err), 6000); }
+  refreshAll();
+}
+
 // ── repartir eventos: un selector por evento para elegir quién lo cubre ──
 // Cada equipo reparte lo suyo: el selector muestra solo su personal y la
 // cobertura del evento de ese equipo (si ya hay una, la cambia o la quita).
@@ -271,6 +311,7 @@ function distributorHtml() {
     return `<div class="col-assign-row ${cv ? "" : "free"}">
       <div class="col-assign-date"><strong>${esc(c.eventDate.slice(8, 10))}/${esc(c.eventDate.slice(5, 7))}</strong><span>${esc(new Intl.DateTimeFormat("es-AR", { weekday: "short" }).format(new Date(`${c.eventDate}T12:00:00`)))}</span></div>
       <div class="col-assign-ev"><button class="col-link" data-col="open-event" data-id="${c.id}">${esc(c.honoree || "Evento")}</button><small>${esc([c.type, c.salon, c.code ? `#${c.code}` : "", packName(c.pack)].filter(Boolean).join(" · "))}</small></div>
+      <label class="col-assign-time"><span>Inicio</span><input type="time" data-col-event-time="${c.id}" value="${esc(eventTimeOf(c.id))}" aria-label="Hora de inicio de ${esc(c.honoree || "el evento")}"></label>
       <div class="col-assign-pick">
         <select data-col-assign="${c.id}" aria-label="Quién cubre ${esc(c.honoree || "el evento")}" ${paid ? "disabled title=\"Ya está pagado: cambialo desde la ficha del evento\"" : ""}>
           <option value="">— Sin asignar —</option>${orphan}<optgroup label="${esc(teamLabel(team))}">${opts}</optgroup>${extOpts}
@@ -290,7 +331,7 @@ function distributorHtml() {
 
   return `<div class="col-assign">
     <div class="col-assign-top">
-      <p class="col-help">Repartiendo los eventos del <b>Equipo ${esc(team)}</b>${teamFilter ? "" : " (elegí otro equipo arriba para repartir su personal)"}. Al elegir a alguien se le asigna el evento con su tarifa; el horario y las indicaciones los completás después en la ficha del evento.</p>
+      <p class="col-help">Repartiendo los eventos del <b>Equipo ${esc(team)}</b>${teamFilter ? "" : " (elegí otro equipo arriba para repartir su personal)"}. Cargá la hora de <b>Inicio</b> de cada evento: el personal queda citado ${ARRIVAL_BEFORE_MIN} minutos antes. Al elegir a alguien se le asigna con su tarifa; las indicaciones las completás en la ficha del evento.</p>
       <div class="toolbar col-assign-filters">
         <select data-col-assign-filter="month" aria-label="Mes"><option value="">Todos los meses</option>${months.map((m) => `<option value="${m}" ${assignMonth === m ? "selected" : ""}>${esc(monthName(m))}</option>`).join("")}</select>
         <select data-col-assign-filter="salon" aria-label="Salón"><option value="">Todos los salones</option>${salons.map((x) => `<option value="${esc(x)}" ${assignSalon === x ? "selected" : ""}>${esc(x)}</option>`).join("")}</select>
@@ -365,11 +406,11 @@ async function applyAssignment(clientId, newId) {
       data.coverages = data.coverages.filter((x) => x.id !== current.id);
       toast(`${client?.honoree || "Evento"}: sin asignar`);
     } else if (current) {
-      [saved] = await run(supabase.from("colleague_coverages").update({ colleague_id: newId, team, amount: num(person?.default_fee), role: person?.role || current.role || null, drive_shared_at: null, drive_shared_email: null }).eq("id", current.id).select());
+      [saved] = await run(supabase.from("colleague_coverages").update({ colleague_id: newId, team, arrival_time: current.arrival_time || suggestedArrival(clientId) || null, amount: num(person?.default_fee), role: person?.role || current.role || null, drive_shared_at: null, drive_shared_email: null }).eq("id", current.id).select());
       data.coverages = data.coverages.map((x) => (x.id === current.id ? saved : x));
     } else {
       [saved] = await run(supabase.from("colleague_coverages").insert({
-        client_id: clientId, colleague_id: newId, kind: "event", team, role: person?.role || null,
+        client_id: clientId, colleague_id: newId, kind: "event", team, role: person?.role || null, arrival_time: suggestedArrival(clientId) || null,
         amount: num(person?.default_fee), location: lastLocationForSalon(client?.salon) || client?.salon || null,
       }).select());
       data.coverages = [...data.coverages, saved];
@@ -622,7 +663,8 @@ function openCoverageForm(clientId, coverage, kind = "event") {
         <label>Gmail (para Drive)<input name="new_email" type="email" placeholder="nombre@gmail.com"></label>
       </div>
       ${session ? `<label>Fecha de la sesión<input name="work_date" type="date" required value="${esc(cv.work_date || "")}"></label>` : ""}
-      <label>Hora de llegada<input name="arrival_time" type="time" value="${hhmm(cv.arrival_time)}"></label>
+      ${session ? "" : `<label>Inicio del evento<input name="event_time" type="time" value="${esc(eventTimeOf(clientId))}"></label>`}
+      <label>Hora de llegada <small>${session ? "" : `(${ARRIVAL_BEFORE_MIN} min antes)`}</small><input name="arrival_time" type="time" value="${hhmm(cv.arrival_time) || (session ? "" : suggestedArrival(clientId))}" data-auto="${cv.arrival_time ? "0" : "1"}"></label>
       <label>Hasta<input name="end_time" type="time" value="${hhmm(cv.end_time)}"></label>
       <label>Lugar / dirección<input name="location" maxlength="160" value="${esc(cv.location || "")}" placeholder="Salón o dirección"></label>
       <label>Monto a pagarle<input name="amount" type="number" min="0" step="1" inputmode="numeric" value="${cv.amount === "" ? "" : Number(cv.amount)}" ${paid ? "disabled" : ""} placeholder="Se completa con su tarifa"></label>
@@ -662,7 +704,9 @@ async function saveCoverageForm(form) {
   const kind = existing?.kind || (f.get("kind") === "session" ? "session" : "event");
   const workDate = kind === "session" ? String(f.get("work_date") || "") : "";
   if (kind === "session" && !workDate) { toast("Poné la fecha de la sesión de fotos."); return; }
+  const eventTime = f.has("event_time") ? String(f.get("event_time") || "") : null;
   await withBusy(form, async () => {
+    if (eventTime !== null && eventTime !== eventTimeOf(clientId)) await setEventTime(clientId, eventTime);
     if (colleagueId === "__new" || colleagueId === "__ext") {
       const external = colleagueId === "__ext";
       const name = String(f.get("new_name") || "").trim();
@@ -795,7 +839,7 @@ export async function shareDriveForClient(clientId) {
 const LAST_MINUTE_DAYS = 7;
 let pendingWa = {};
 function daysUntil(iso) { return Math.round((new Date(`${iso}T12:00:00`) - new Date(`${today()}T12:00:00`)) / 86400000); }
-async function notifyChange({ client, cv, added = null, removed = null, changed = null }) {
+async function notifyChange({ client, cv, added = null, removed = null, changed = null, offerWa = true }) {
   if (!client || !cv || (!added && !removed && !changed)) return;
   const what = isSession(cv) ? "la sesión de fotos de" : "el evento de";
   const label = `${client.honoree || "Evento"}${client.type ? ` (${client.type})` : ""} · ${client.salon || ""} · ${dateLong(coverageDate(cv))}`;
@@ -804,7 +848,7 @@ async function notifyChange({ client, cv, added = null, removed = null, changed 
   const rows = [];
   if (added) rows.push({ colleague_id: added.id, client_id: client.id, kind: "assigned", message: `Te asignaron ${what} ${label}.${time}${place}` });
   if (removed) rows.push({ colleague_id: removed.id, client_id: client.id, kind: "removed", message: `Ya no cubrís ${what} ${label}. Hubo un cambio de personal.` });
-  if (changed) rows.push({ colleague_id: changed.id, client_id: client.id, kind: "changed", message: `Cambiaron los datos de ${what} ${label}.${time}${place}` });
+  if (changed) rows.push({ colleague_id: changed.id, client_id: client.id, kind: "changed", message: `Cambiaron los datos ${isSession(cv) ? "de la sesión de fotos de" : "del evento de"} ${label}.${time}${place}` });
   const { error } = await supabase.from("colleague_notices").insert(rows);
   if (error) console.warn("No se pudo guardar el aviso:", error.message);
 
@@ -812,7 +856,7 @@ async function notifyChange({ client, cv, added = null, removed = null, changed 
   const lastMinute = d >= 0 && d <= LAST_MINUTE_DAYS;
   // A una persona externa siempre hay que pasarle la info (no tiene portal).
   const externalNew = added && isExternal(added) && d >= 0;
-  if (!lastMinute && !externalNew) return;
+  if (!offerWa || (!lastMinute && !externalNew)) return;
   pendingWa = {};
   const people = [];
   if (added?.phone) { pendingWa[added.id] = coverageMessage(cv); people.push({ c: added, label: `💬 Avisar a ${firstName(added.name)} (entra)` }); }
@@ -844,7 +888,12 @@ function coverageMessage(cv) {
     `Hola ${firstName(c?.name)}! Te paso los datos ${isSession(cv) ? "de la sesión de fotos" : "del evento"}:`,
     "",
     `📅 ${dateLong(coverageDate(cv))}`,
-    cv.arrival_time ? `🕒 Presentarte a las ${hhmm(cv.arrival_time)} h${cv.end_time ? ` (hasta las ${hhmm(cv.end_time)} h)` : ""}` : null,
+    (() => {
+      const arrival = hhmm(cv.arrival_time) || (isSession(cv) ? "" : suggestedArrival(cv.client_id));
+      const start = isSession(cv) ? "" : eventTimeOf(cv.client_id);
+      if (!arrival) return start ? `🕒 El evento empieza a las ${start} h` : null;
+      return `🕒 Presentarte a las ${arrival} h${start ? ` (el evento empieza a las ${start} h)` : ""}${cv.end_time ? ` · hasta las ${hhmm(cv.end_time)} h` : ""}`;
+    })(),
     `📍 ${cv.location || client?.salon || ""}`,
     `🎉 ${client?.honoree || ""}${client?.type ? ` (${client.type})` : ""}`,
     cv.role ? `📸 Función: ${cv.role}` : null,
@@ -1152,12 +1201,18 @@ export function initColleagues(dependencies) {
       renderColleagues();
     }
     if (e.target.matches("#colCoverageForm select[name=colleague_id]")) onCoverageColleagueChange(e.target);
+    if (e.target.matches("[data-col-event-time]")) onEventTimeInput(e.target);
   });
   document.addEventListener("input", (e) => {
     const form = e.target.form;
     if (form?.id === "colPaymentForm") updatePaymentTotals(form);
     if (form?.id === "colDiscountForm") updateDiscountHelp(form);
     if (form?.id === "colCoverageForm" && e.target.name === "amount") e.target.dataset.auto = "0";
+    if (form?.id === "colCoverageForm" && e.target.name === "arrival_time") e.target.dataset.auto = "0";
+    if (form?.id === "colCoverageForm" && e.target.name === "event_time") {
+      const arrival = form.elements.arrival_time;
+      if (e.target.value && (arrival.dataset.auto === "1" || !arrival.value)) { arrival.value = minusMinutes(e.target.value, ARRIVAL_BEFORE_MIN); arrival.dataset.auto = "1"; }
+    }
   });
   document.addEventListener("submit", (e) => {
     const handlers = { colExternalForm: saveExternalForm, colColleagueForm: saveColleagueForm, colCoverageForm: saveCoverageForm, colDiscountForm: saveDiscountForm, colPaymentForm: savePaymentForm };
