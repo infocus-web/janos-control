@@ -656,7 +656,7 @@ function renderCalendar(){
     // Ocultar los eventos de Google Calendar que son el mismo evento que un cliente de Janos ese día
     // (coincide el código, ej. "ph50250 15-Victoria" ↔ cliente #50250, o el nombre del homenajeado).
     const gcalItems=(gcalByDay.get(day)||[]).filter(e=>!items.some(c=>gcalMatchesClient(e,c)));
-    const gcalHtml=gcalItems.map(e=>`<div class="cal-gcal-event" title="${escapeHtml(e.title)}${e.time?' · '+e.time:''}${e.location?' · '+e.location:''}">📅 ${escapeHtml(e.title)}${e.time?` <span class="cal-gcal-time">${e.time}</span>`:''}</div>`).join("");
+    const gcalHtml=gcalItems.map(e=>`<div class="cal-gcal-event" title="${escapeHtml(e.title)}${e.time?' · '+e.time:''}${e.location?' · '+e.location:''}">${e.time?`<span class="cal-gcal-time">${e.time}</span>`:''}${escapeHtml(e.title)}</div>`).join("");
     cells.push(`<div class="cal-cell${dateKey===todayKey?" today":""}"><span class="cal-day">${day}</span>${items.map(c=>{const who=assignedNamesForClient(c.id);return `<button class="cal-event ${calendarSalonClass(c.salon,salons)}" data-open-client="${c.id}" title="${escapeHtml(c.honoree)} · ${escapeHtml(c.salon||"")} · ${who.length?escapeHtml("Asignado: "+who.join(", ")):"Sin asignar"}">${escapeHtml(c.honoree)}<span class="cal-event-who${who.length?"":" none"}">${who.length?escapeHtml(who.join(", ")):"Sin asignar"}</span></button>`;}).join("")}${gcalHtml}</div>`);
   }
   const trailing=(7-(cells.length%7))%7;
