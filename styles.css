@@ -842,3 +842,9 @@ button.col-chip:hover { filter: brightness(1.15); }
 .col-assign-pick small.col-due { color: var(--amber); font-weight: 700; }
 .col-assign-pick small.col-paid { color: var(--green); font-weight: 700; }
 .col-pay-switch { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin: 10px 0 4px; padding: 8px 12px; border: 1px dashed var(--line-2); border-radius: var(--radius); font-size: 13px; color: var(--muted); }
+.col-taskkeys { border: 1px solid var(--line-2); border-radius: var(--radius); padding: 10px 12px; margin: 0 0 12px; }
+.col-taskkeys summary { cursor: pointer; font-weight: 700; color: var(--ink-2); font-size: 13px; }
+.col-taskkeys summary b { display: inline-grid; place-items: center; min-width: 22px; height: 22px; border-radius: 11px; background: var(--gold-soft); color: var(--gold); font-size: 12px; margin-left: 6px; padding: 0 6px; }
+.col-taskkeys fieldset { border: 0; padding: 0; margin: 10px 0 0; display: grid; gap: 6px; }
+.col-taskkeys legend { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; margin-bottom: 4px; }
+.col-taskkeys .col-check { font-size: 13px; }

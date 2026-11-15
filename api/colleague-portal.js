@@ -22,7 +22,7 @@ import { createClient } from "@supabase/supabase-js";
 
 const PAST_DAYS = 60;
 const CLIENT_FIELDS = "id,code,event_date,event_time,salon,event_type,honoree,client_name,client_phone,client_email,guests,pack,addons,notes,whatsapp_group_url,drive_url";
-const TASK_FIELDS = "id,client_id,title,phase,status,completed_at,responsible,notes,sort_order";
+const TASK_FIELDS = "id,client_id,task_key,title,phase,status,completed_at,responsible,notes,sort_order";
 
 function send(res, status, body) {
   res.status(status);
@@ -35,7 +35,7 @@ function publicSession(s) { return s ? { access_token: s.access_token, refresh_t
 function hhmm(t) { return t ? String(t).slice(0, 5) : ""; }
 
 async function colleagueForUser(admin, userId) {
-  const { data, error } = await admin.from("colleagues").select("id,owner_id,name,role,salons,active").eq("user_id", userId).maybeSingle();
+  const { data, error } = await admin.from("colleagues").select("id,owner_id,name,role,salons,task_keys,active").eq("user_id", userId).maybeSingle();
   if (error) throw error;
   return data && data.active ? data : null;
 }
@@ -83,7 +83,8 @@ async function loadData(admin, colleague) {
   };
   const [clients, tasks, notes, marks] = await Promise.all([
     pick("clients", CLIENT_FIELDS, (q) => q.eq("owner_id", colleague.owner_id)),
-    pick("tasks", TASK_FIELDS, (q) => q.eq("owner_id", colleague.owner_id)),
+    // Solo las tareas que el dueño le asignó en su ficha (vacío = ninguna).
+    (colleague.task_keys || []).length ? pick("tasks", TASK_FIELDS, (q) => q.eq("owner_id", colleague.owner_id).in("task_key", colleague.task_keys)) : Promise.resolve([]),
     pick("colleague_notes", "id,client_id,body,author_name,created_at", (q) => q.eq("colleague_id", colleague.id)),
     pick("colleague_task_marks", "task_id,client_id,author_name,colleague_id,done_at", (q) => q.eq("owner_id", colleague.owner_id)),
   ]);
@@ -154,8 +155,8 @@ export default async function handler(req, res) {
     }
 
     if (action === "mark") {
-      const { data: task } = await admin.from("tasks").select("id,client_id,owner_id,status").eq("id", String(body.taskId || "")).maybeSingle();
-      if (!task || task.owner_id !== colleague.owner_id || !(await canSeeClient(admin, colleague, task.client_id))) return send(res, 404, { error: "Tarea no encontrada." });
+      const { data: task } = await admin.from("tasks").select("id,client_id,owner_id,status,task_key").eq("id", String(body.taskId || "")).maybeSingle();
+      if (!task || task.owner_id !== colleague.owner_id || !(colleague.task_keys || []).includes(task.task_key) || !(await canSeeClient(admin, colleague, task.client_id))) return send(res, 404, { error: "Tarea no encontrada." });
       if (body.done) {
         if (task.status === "done") return send(res, 200, { ok: true });
         const { error } = await admin.from("colleague_task_marks").upsert({ task_id: task.id, owner_id: colleague.owner_id, client_id: task.client_id, colleague_id: colleague.id, author_name: colleague.name, done_at: new Date().toISOString() }, { onConflict: "task_id", ignoreDuplicates: true });

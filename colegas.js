@@ -706,6 +706,24 @@ function showDialog(id, html) {
 function closeDialog(id) { const d = document.getElementById(id); if (d?.open) d.close(); }
 function head(eyebrow, title, closeId) { return `<div class="modal-head"><div><p class="eyebrow">${esc(eyebrow)}</p><h2>${esc(title)}</h2></div><button class="icon-btn" type="button" data-col="close" data-id="${closeId}" aria-label="Cerrar">×</button></div>`; }
 
+// Tipos de tarea que existen en los clientes (task_key → título y etapa).
+const PHASE_ORDER = ["Preparación", "Pre-evento", "Evento", "Servicios elegidos", "Servicios VIP", "Adicionales", "Post-evento", "Entrega"];
+function taskTypes() {
+  const map = new Map();
+  deps.getClients().forEach((c) => (c.tasks || []).forEach((t) => { if (t.key && !map.has(t.key)) map.set(t.key, { key: t.key, title: t.title, phase: t.phase || "Otras" }); }));
+  return [...map.values()].sort((a, b) => ((PHASE_ORDER.indexOf(a.phase) + 1 || 99) - (PHASE_ORDER.indexOf(b.phase) + 1 || 99)) || a.title.localeCompare(b.title));
+}
+function taskKeysFieldset(selected = []) {
+  const types = taskTypes();
+  const sel = new Set(selected || []);
+  const phases = [...new Set(types.map((t) => t.phase))];
+  return `<details class="col-taskkeys" ${sel.size ? "" : "open"}>
+    <summary>Tareas que ve y puede tildar en su portal <b data-col-taskkeys-count>${sel.size}</b></summary>
+    <p class="col-help">Solo le aparecen las que marques. Si no marcás ninguna, no ve tareas.</p>
+    ${phases.map((ph) => `<fieldset><legend>${esc(ph)}</legend>${types.filter((t) => t.phase === ph).map((t) => `<label class="col-check"><input type="checkbox" name="task_keys" value="${esc(t.key)}" ${sel.has(t.key) ? "checked" : ""}> ${esc(t.title)}</label>`).join("")}</fieldset>`).join("") || `<span class="col-sub">Todavía no hay tareas cargadas en tus clientes.</span>`}
+  </details>`;
+}
+
 function salonOptions(selected = []) {
   const set = new Set([...(selected || []), ...deps.getClients().map((c) => c.salon).filter(Boolean)]);
   return [...set].sort((a, b) => a.localeCompare(b));
@@ -728,6 +746,7 @@ function openColleagueForm(colleague) {
     <fieldset class="col-salons"><legend>Salones asignados <small>(ve todos los eventos y tareas de estos salones en su portal)</small></legend>
       ${salonOptions(c.salons).map((s) => `<label class="col-check"><input type="checkbox" name="salons" value="${esc(s)}" ${(c.salons || []).includes(s) ? "checked" : ""}> ${esc(s)}</label>`).join("") || `<span class="col-sub">Todavía no hay salones cargados en tus clientes.</span>`}
     </fieldset>
+    ${isExternal(c) ? "" : taskKeysFieldset(c.task_keys)}
     <label class="full-label">Notas<textarea name="notes" rows="2" placeholder="Alias para transferir, equipo que usa, etc.">${esc(c.notes || "")}</textarea></label>
     <datalist id="colRoleList"><option>Fotógrafo</option><option>Videógrafo</option><option>Asistente</option><option>Drone</option></datalist>
     <div class="modal-actions">
@@ -752,6 +771,7 @@ async function saveColleagueForm(form) {
     salons: f.getAll("salons").map(String),
     team: String(f.get("team") || "Pablo"),
   };
+  if (form.querySelector("input[name=task_keys]")) row.task_keys = f.getAll("task_keys").map(String);
   if (!row.name) { toast("Poné el nombre del colega."); return; }
   const id = form.dataset.id;
   if (id) row.active = f.get("active") === "on";
@@ -1425,6 +1445,7 @@ export function initColleagues(dependencies) {
     Promise.resolve(action(el.dataset.id)).catch((err) => { console.error(err); toast(friendlyError(err), 6000); });
   });
   document.addEventListener("change", (e) => {
+    if (e.target.matches("#colColleagueForm input[name=task_keys]")) { const n = e.target.form.querySelectorAll("input[name=task_keys]:checked").length; const b = e.target.form.querySelector("[data-col-taskkeys-count]"); if (b) b.textContent = n; }
     if (e.target.matches("[data-col-toggle-inactive]")) { showInactive = e.target.checked; renderColleagues(); }
     if (e.target.matches("[data-col-assign]")) assignFromSelector(e.target);
     if (e.target.matches("[data-col-assign-filter]")) {
