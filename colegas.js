@@ -22,6 +22,11 @@ let loadError = "";
 let showInactive = false;
 // Equipos: comparten la cuenta, pero cada jefe maneja y le paga a su gente.
 const DEFAULT_TEAMS = ["Pablo", "Dylan", "Gustavo"];
+// Personal ajeno que cubre algún evento suelto: queda registrado como colega
+// de este grupo y la cobertura guarda qué equipo lo asignó (cv.team).
+const EXTERNAL_TEAM = "Externos";
+function teamLabel(t) { return t === EXTERNAL_TEAM ? "Externos" : `Equipo ${t}`; }
+function isExternal(c) { return teamOf(c) === EXTERNAL_TEAM; }
 const TEAM_KEY = "janos_colegas_team";
 let teamFilter = (() => { try { return localStorage.getItem(TEAM_KEY) || ""; } catch { return ""; } })();
 function teamOf(c) { return String(c?.team || "Pablo"); }
@@ -167,7 +172,7 @@ export function renderColleagues() {
   const upcomingCount = data.coverages.filter((cv) => teamIds.has(cv.colleague_id) && coverageDate(cv) >= today()).length;
   const discountLeft = num(sums.reduce((s, x) => s + x.discountLeft, 0));
   const inactiveCount = teamColleagues.filter((c) => !c.active).length;
-  const teamTabs = `<div class="view-switch col-teams" aria-label="Equipo">${["", ...allTeams()].map((t) => `<button class="${teamFilter === t ? "active" : ""}" aria-pressed="${teamFilter === t}" data-col="team" data-id="${esc(t)}">${t ? `Equipo ${esc(t)}` : "Todos"} <b>${data.colleagues.filter((c) => c.active && (!t || teamOf(c) === t)).length}</b></button>`).join("")}</div>`;
+  const teamTabs = `<div class="view-switch col-teams" aria-label="Equipo">${["", ...allTeams()].map((t) => `<button class="${teamFilter === t ? "active" : ""}" aria-pressed="${teamFilter === t}" data-col="team" data-id="${esc(t)}">${t ? esc(teamLabel(t)) : "Todos"} <b>${data.colleagues.filter((c) => c.active && (!t || teamOf(c) === t)).length}</b></button>`).join("")}</div>`;
 
   const modeTabs = `<div class="view-switch col-modes" aria-label="Sección">
     <button class="${colMode === "team" ? "active" : ""}" aria-pressed="${colMode === "team"}" data-col="mode" data-id="team">👥 Personal y pagos</button>
@@ -198,7 +203,7 @@ function cardHtml(c) {
   return `<article class="col-card ${c.active ? "" : "inactive"}">
     <header class="col-card-head">
       <div class="col-avatar">${esc(firstName(c.name).charAt(0).toUpperCase() || "?")}</div>
-      <div class="col-card-name"><strong>${esc(c.name)}</strong><span>Equipo ${esc(teamOf(c))} · ${esc(c.role || "Sin función")}${c.active ? "" : " · Inactivo"}</span></div>
+      <div class="col-card-name"><strong>${esc(c.name)}</strong><span>${esc(teamLabel(teamOf(c)))} · ${esc(c.role || "Sin función")}${c.active ? "" : " · Inactivo"}</span></div>
       <button class="icon-btn col-edit" title="Editar colega" data-col="edit-colleague" data-id="${c.id}">✎</button>
     </header>
     <div class="col-owed ${s.net > 0 ? "has-debt" : ""}"><span>Le debés</span><strong>${money(s.net)}</strong>${s.gross !== s.net ? `<small>${money(s.gross)} − cuota de descuento</small>` : `<small>${s.due.length ? `${s.due.length} ${s.due.length === 1 ? "evento" : "eventos"} sin pagar` : "Está al día"}</small>`}</div>
@@ -221,9 +226,13 @@ function cardHtml(c) {
 // ── repartir eventos: un selector por evento para elegir quién lo cubre ──
 // Cada equipo reparte lo suyo: el selector muestra solo su personal y la
 // cobertura del evento de ese equipo (si ya hay una, la cambia o la quita).
-function assignTeam() { return teamFilter || "Pablo"; }
+function assignTeam() { return teamFilter && teamFilter !== EXTERNAL_TEAM ? teamFilter : "Pablo"; }
 function teamCoverages(clientId, team) {
-  return data.coverages.filter((cv) => cv.client_id === clientId && (cv.kind || "event") === "event" && teamOf(colleagueById(cv.colleague_id)) === team);
+  return data.coverages.filter((cv) => {
+    if (cv.client_id !== clientId || (cv.kind || "event") !== "event") return false;
+    const c = colleagueById(cv.colleague_id);
+    return isExternal(c) ? (cv.team || "Pablo") === team : teamOf(c) === team;
+  });
 }
 function distributorHtml() {
   const team = assignTeam();
@@ -256,13 +265,15 @@ function distributorHtml() {
       const clash = other && other !== c.id;
       return `<option value="${p.id}" ${cv?.colleague_id === p.id ? "selected" : ""}>${esc(p.name)}${clash ? " · ⚠ ya tiene otro evento ese día" : ""}</option>`;
     }).join("");
-    const orphan = cv && !people.some((p) => p.id === cv.colleague_id) ? `<option value="${cv.colleague_id}" selected>${esc(colleagueById(cv.colleague_id)?.name || "Colega")} (inactivo)</option>` : "";
+    const externals = data.colleagues.filter((x) => isExternal(x) && (x.active || x.id === cv?.colleague_id)).sort((a, b) => a.name.localeCompare(b.name));
+    const orphan = cv && !people.some((p) => p.id === cv.colleague_id) && !externals.some((x) => x.id === cv.colleague_id) ? `<option value="${cv.colleague_id}" selected>${esc(colleagueById(cv.colleague_id)?.name || "Colega")} (inactivo)</option>` : "";
+    const extOpts = `<optgroup label="Externos">${externals.map((x) => `<option value="${x.id}" ${cv?.colleague_id === x.id ? "selected" : ""}>${esc(x.name)} (externo)</option>`).join("")}<option value="__ext">＋ Persona externa…</option></optgroup>`;
     return `<div class="col-assign-row ${cv ? "" : "free"}">
       <div class="col-assign-date"><strong>${esc(c.eventDate.slice(8, 10))}/${esc(c.eventDate.slice(5, 7))}</strong><span>${esc(new Intl.DateTimeFormat("es-AR", { weekday: "short" }).format(new Date(`${c.eventDate}T12:00:00`)))}</span></div>
       <div class="col-assign-ev"><button class="col-link" data-col="open-event" data-id="${c.id}">${esc(c.honoree || "Evento")}</button><small>${esc([c.type, c.salon, c.code ? `#${c.code}` : "", packName(c.pack)].filter(Boolean).join(" · "))}</small></div>
       <div class="col-assign-pick">
         <select data-col-assign="${c.id}" aria-label="Quién cubre ${esc(c.honoree || "el evento")}" ${paid ? "disabled title=\"Ya está pagado: cambialo desde la ficha del evento\"" : ""}>
-          <option value="">— Sin asignar —</option>${orphan}${opts}
+          <option value="">— Sin asignar —</option>${orphan}<optgroup label="${esc(teamLabel(team))}">${opts}</optgroup>${extOpts}
         </select>
         ${cvs.length > 1 ? `<small>+${cvs.length - 1} más del equipo (ver ficha)</small>` : paid ? `<small>Pagado</small>` : ""}
       </div>
@@ -296,15 +307,53 @@ function distributorHtml() {
   </div>`;
 }
 
-async function assignFromSelector(select) {
+function assignFromSelector(select) {
   const clientId = select.dataset.colAssign;
+  if (select.value === "__ext") { refreshAll(); openExternalForm(clientId); return; }
+  select.disabled = true;
+  return applyAssignment(clientId, select.value);
+}
+
+// Persona ajena: se carga una vez (queda en "Externos") y se le asigna el evento.
+function openExternalForm(clientId) {
+  const client = clientById(clientId); if (!client) return;
+  showDialog("colFormDialog", `<form id="colExternalForm" data-client="${clientId}">
+    ${head(`${deps.dateText(client.eventDate)} · ${client.salon || ""}`, `Persona externa para ${client.honoree || "el evento"}`, "colFormDialog")}
+    <p class="col-help">Queda registrado quién cubrió (en el grupo «Externos», aparte de tu equipo) y te abre el WhatsApp con día, hora y lugar para pasarle la info.</p>
+    <div class="form-grid">
+      <label>Nombre y apellido<input name="name" required maxlength="80" placeholder="Ej. Juan Pérez"></label>
+      <label>WhatsApp<input name="phone" type="tel" inputmode="tel" placeholder="Ej. 11 2345 6789"></label>
+      <label>Función<input name="role" maxlength="60" placeholder="Fotógrafo, videógrafo…" list="colRoleList3"></label>
+      <label>Monto a pagarle <small>(0 si no le pagás vos)</small><input name="amount" type="number" min="0" step="1" inputmode="numeric" placeholder="0"></label>
+    </div>
+    <datalist id="colRoleList3"><option>Fotógrafo</option><option>Videógrafo</option><option>Asistente</option><option>Drone</option></datalist>
+    <div class="modal-actions">
+      <button class="secondary-btn" type="button" data-col="close" data-id="colFormDialog">Cancelar</button>
+      <button class="primary-btn" type="submit">Asignar</button>
+    </div>
+  </form>`);
+}
+async function saveExternalForm(form) {
+  const f = new FormData(form);
+  const name = String(f.get("name") || "").trim();
+  if (!name) { toast("Poné el nombre de la persona."); return; }
+  await withBusy(form, async () => {
+    const [person] = await run(supabase.from("colleagues").insert({
+      name, phone: String(f.get("phone") || "").trim() || null, role: String(f.get("role") || "").trim() || null,
+      default_fee: num(f.get("amount")), team: EXTERNAL_TEAM,
+    }).select());
+    data.colleagues = [...data.colleagues, person].sort((a, b) => a.name.localeCompare(b.name));
+    closeDialog("colFormDialog");
+    await applyAssignment(form.dataset.client, person.id);
+  });
+}
+
+async function applyAssignment(clientId, newId) {
   const client = clientById(clientId);
   const team = assignTeam();
   const current = teamCoverages(clientId, team)[0] || null;
   const prevId = current?.colleague_id || "";
-  const newId = select.value;
-  if ((current?.colleague_id || "") === newId) return;
-  select.disabled = true;
+  if (prevId === newId) { refreshAll(); return; }
   try {
     if (current?.payment_id) throw new Error("Esa cobertura ya está pagada: cambiala desde la ficha del evento.");
     if (newId && data.coverages.some((cv) => cv.client_id === clientId && cv.colleague_id === newId && (cv.kind || "event") === "event" && cv.id !== current?.id)) throw new Error("Ya está asignada a este evento.");
@@ -316,11 +365,11 @@ async function assignFromSelector(select) {
       data.coverages = data.coverages.filter((x) => x.id !== current.id);
       toast(`${client?.honoree || "Evento"}: sin asignar`);
     } else if (current) {
-      [saved] = await run(supabase.from("colleague_coverages").update({ colleague_id: newId, amount: num(person?.default_fee), role: person?.role || current.role || null, drive_shared_at: null, drive_shared_email: null }).eq("id", current.id).select());
+      [saved] = await run(supabase.from("colleague_coverages").update({ colleague_id: newId, team, amount: num(person?.default_fee), role: person?.role || current.role || null, drive_shared_at: null, drive_shared_email: null }).eq("id", current.id).select());
       data.coverages = data.coverages.map((x) => (x.id === current.id ? saved : x));
     } else {
       [saved] = await run(supabase.from("colleague_coverages").insert({
-        client_id: clientId, colleague_id: newId, kind: "event", role: person?.role || null,
+        client_id: clientId, colleague_id: newId, kind: "event", team, role: person?.role || null,
         amount: num(person?.default_fee), location: lastLocationForSalon(client?.salon) || client?.salon || null,
       }).select());
       data.coverages = [...data.coverages, saved];
@@ -418,7 +467,7 @@ function coverRowHtml(cv, client) {
   const paid = data.payments.find((p) => p.id === cv.payment_id);
   const time = cv.arrival_time ? `${hhmm(cv.arrival_time)}${cv.end_time ? `–${hhmm(cv.end_time)}` : ""} h` : "Sin horario";
   return `<div class="col-cover-row">
-    <div class="col-cover-main"><strong>${esc(c?.name || "Colega")}${isSession(cv) ? ` <span class="col-chip">📷 Sesión ${esc(deps.dateText(coverageDate(cv)))}</span>` : ""}</strong><span>${esc(cv.role || c?.role || "")}${cv.role || c?.role ? " · " : ""}${esc(time)}${cv.location ? ` · ${esc(cv.location)}` : ""}</span>${cv.notes ? `<small>${esc(cv.notes)}</small>` : ""}</div>
+    <div class="col-cover-main"><strong>${esc(c?.name || "Colega")}${isExternal(c) ? ` <span class="col-chip">Externo</span>` : ""}${isSession(cv) ? ` <span class="col-chip">📷 Sesión ${esc(deps.dateText(coverageDate(cv)))}</span>` : ""}</strong><span>${esc(cv.role || c?.role || "")}${cv.role || c?.role ? " · " : ""}${esc(time)}${cv.location ? ` · ${esc(cv.location)}` : ""}</span>${cv.notes ? `<small>${esc(cv.notes)}</small>` : ""}</div>
     <div class="col-cover-side">
       <strong>${money(cv.amount)}</strong>
       ${paid ? `<span class="col-chip ok">Pagado ${esc(deps.dateText(paid.paid_on))}</span>` : `<span class="col-chip">Pendiente</span>`}
@@ -563,12 +612,12 @@ function openCoverageForm(clientId, coverage, kind = "event") {
     <div class="form-grid">
       <label>Colega<select name="colleague_id" required ${paid ? "disabled" : ""}>
         <option value="">Elegí de la lista…</option>
-        ${allTeams().filter((t) => options.some((c) => teamOf(c) === t)).map((t) => `<optgroup label="Equipo ${esc(t)}">${options.filter((c) => teamOf(c) === t).map((c) => `<option value="${c.id}" data-fee="${Number(c.default_fee) || 0}" data-role="${esc(c.role || "")}" ${c.id === cv.colleague_id ? "selected" : ""}>${esc(c.name)}${c.role ? ` · ${esc(c.role)}` : ""}</option>`).join("")}</optgroup>`).join("")}
-        ${coverage ? "" : `<option value="__new">＋ Agregar un colega nuevo…</option>`}
+        ${allTeams().filter((t) => options.some((c) => teamOf(c) === t)).map((t) => `<optgroup label="${esc(teamLabel(t))}">${options.filter((c) => teamOf(c) === t).map((c) => `<option value="${c.id}" data-fee="${Number(c.default_fee) || 0}" data-role="${esc(c.role || "")}" ${c.id === cv.colleague_id ? "selected" : ""}>${esc(c.name)}${c.role ? ` · ${esc(c.role)}` : ""}</option>`).join("")}</optgroup>`).join("")}
+        ${coverage ? "" : `<option value="__new">＋ Agregar un colega nuevo…</option><option value="__ext">＋ Persona externa (ajena a los equipos)…</option>`}
       </select></label>
       <label>Función en este evento<input name="role" maxlength="60" value="${esc(cv.role || "")}" placeholder="Fotógrafo, videógrafo…" list="colRoleList2"></label>
       <div class="col-new-fields hidden">
-        <label>Nombre del colega nuevo<input name="new_name" maxlength="80" placeholder="Nombre y apellido"></label>
+        <label><span data-col-new-label>Nombre del colega nuevo</span><input name="new_name" maxlength="80" placeholder="Nombre y apellido"></label>
         <label>WhatsApp<input name="new_phone" type="tel" inputmode="tel" placeholder="Ej. 11 2345 6789"></label>
         <label>Gmail (para Drive)<input name="new_email" type="email" placeholder="nombre@gmail.com"></label>
       </div>
@@ -589,8 +638,10 @@ function openCoverageForm(clientId, coverage, kind = "event") {
 
 function onCoverageColleagueChange(select) {
   const form = select.form;
-  const isNew = select.value === "__new";
+  const isNew = select.value === "__new" || select.value === "__ext";
   form.querySelector(".col-new-fields").classList.toggle("hidden", !isNew);
+  const lbl = form.querySelector("[data-col-new-label]");
+  if (lbl) lbl.textContent = select.value === "__ext" ? "Nombre de la persona externa" : "Nombre del colega nuevo";
   form.elements.new_name.required = isNew;
   const opt = select.selectedOptions[0];
   if (!isNew && opt?.dataset.fee !== undefined) {
@@ -612,7 +663,8 @@ async function saveCoverageForm(form) {
   const workDate = kind === "session" ? String(f.get("work_date") || "") : "";
   if (kind === "session" && !workDate) { toast("Poné la fecha de la sesión de fotos."); return; }
   await withBusy(form, async () => {
-    if (colleagueId === "__new") {
+    if (colleagueId === "__new" || colleagueId === "__ext") {
+      const external = colleagueId === "__ext";
       const name = String(f.get("new_name") || "").trim();
       const email = String(f.get("new_email") || "").trim().toLowerCase();
       if (!name) throw new Error("Poné el nombre del colega nuevo.");
@@ -620,6 +672,7 @@ async function saveCoverageForm(form) {
       const [saved] = await run(supabase.from("colleagues").insert({
         name, phone: String(f.get("new_phone") || "").trim() || null, email: email || null,
         role: String(f.get("role") || "").trim() || null, default_fee: num(f.get("amount")),
+        team: external ? EXTERNAL_TEAM : assignTeam(),
       }).select());
       data.colleagues = [...data.colleagues, saved].sort((a, b) => a.name.localeCompare(b.name));
       colleagueId = saved.id;
@@ -633,6 +686,8 @@ async function saveCoverageForm(form) {
       work_date: workDate || null,
     };
     if (!existing?.payment_id) { row.colleague_id = colleagueId; row.amount = num(f.get("amount")); }
+    // Externos: la cobertura recuerda qué equipo la asignó (para el reparto).
+    if (isExternal(colleagueById(colleagueId)) && !existing?.team) row.team = assignTeam();
     if (data.coverages.some((x) => x.client_id === clientId && x.id !== id && x.colleague_id === (row.colleague_id || existing?.colleague_id) && (x.kind || "event") === kind)) throw new Error(`Ese colega ya está asignado a ${kind === "session" ? "la sesión de fotos" : "este evento"}.`);
     let saved;
     if (existing) {
@@ -754,7 +809,10 @@ async function notifyChange({ client, cv, added = null, removed = null, changed 
   if (error) console.warn("No se pudo guardar el aviso:", error.message);
 
   const d = daysUntil(coverageDate(cv));
-  if (d < 0 || d > LAST_MINUTE_DAYS) return;
+  const lastMinute = d >= 0 && d <= LAST_MINUTE_DAYS;
+  // A una persona externa siempre hay que pasarle la info (no tiene portal).
+  const externalNew = added && isExternal(added) && d >= 0;
+  if (!lastMinute && !externalNew) return;
   pendingWa = {};
   const people = [];
   if (added?.phone) { pendingWa[added.id] = coverageMessage(cv); people.push({ c: added, label: `💬 Avisar a ${firstName(added.name)} (entra)` }); }
@@ -762,8 +820,8 @@ async function notifyChange({ client, cv, added = null, removed = null, changed 
   if (removed?.phone) { pendingWa[removed.id] = `Hola ${firstName(removed.name)}! Te aviso que hubo un cambio de personal: ya no cubrís ${what} ${label}. ¡Gracias igual! 🙌`; people.push({ c: removed, label: `💬 Avisar a ${firstName(removed.name)} (sale)` }); }
   if (!people.length) return;
   showDialog("colFormDialog", `<div class="col-cal">
-    ${head(d === 0 ? "Es hoy" : `Faltan ${d} ${d === 1 ? "día" : "días"}`, "¿Les avisás por WhatsApp?", "colFormDialog")}
-    <p class="col-help">Ya les quedó el aviso en su portal. Como es a último momento, mandales también un WhatsApp (se abre con el mensaje escrito).</p>
+    ${head(d === 0 ? "Es hoy" : `Faltan ${d} ${d === 1 ? "día" : "días"}`, externalNew && !lastMinute ? "Mandale la info por WhatsApp" : "¿Les avisás por WhatsApp?", "colFormDialog")}
+    <p class="col-help">${externalNew && !lastMinute ? "Pasale la info del evento a la persona externa por WhatsApp (se abre con el mensaje escrito)." : "Ya les quedó el aviso en su portal. Como es a último momento, mandales también un WhatsApp (se abre con el mensaje escrito)."}</p>
     <div class="modal-actions col-cal-actions">
       <button class="ghost-btn" type="button" data-col="close" data-id="colFormDialog">No, gracias</button>
       ${people.map((p) => `<button class="primary-btn" type="button" data-col="notify-wa" data-id="${p.c.id}">${esc(p.label)}</button>`).join("")}
@@ -1102,7 +1160,7 @@ export function initColleagues(dependencies) {
     if (form?.id === "colCoverageForm" && e.target.name === "amount") e.target.dataset.auto = "0";
   });
   document.addEventListener("submit", (e) => {
-    const handlers = { colColleagueForm: saveColleagueForm, colCoverageForm: saveCoverageForm, colDiscountForm: saveDiscountForm, colPaymentForm: savePaymentForm };
+    const handlers = { colExternalForm: saveExternalForm, colColleagueForm: saveColleagueForm, colCoverageForm: saveCoverageForm, colDiscountForm: saveDiscountForm, colPaymentForm: savePaymentForm };
     const handler = handlers[e.target.id];
     if (!handler) return;
     e.preventDefault();
