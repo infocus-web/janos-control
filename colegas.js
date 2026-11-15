@@ -638,7 +638,8 @@ async function applyAssignment(clientId, newId, kind = "event") {
     }
     await notifyChange({ client, cv: saved || current, added: saved ? person : null, removed: prevId && prevId !== newId ? colleagueById(prevId) : null });
     if (saved) {
-      toast(`${kind === "session" ? "Sesión de " : ""}${client?.honoree || "Evento"} → ${person?.name}`);
+      if (!Number(saved.amount)) toast(`⚠ ${person?.name} quedó con monto $0 en ${client?.honoree || "este evento"}: revisá su tarifa (✎) o corregí el monto en la ficha del evento.`, 8000);
+      else toast(`${kind === "session" ? "Sesión de " : ""}${client?.honoree || "Evento"} → ${person?.name} (${money(saved.amount)})`);
       // Si el evento ya tiene carpeta de Drive conectada, se la comparte sola.
       if (client?.driveUrl && person?.email && deps.driveAutoAvailable(client.salon)) await shareDrive(saved.id).catch(() => {});
     }
