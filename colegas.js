@@ -767,6 +767,7 @@ function coverRowHtml(cv, client) {
     <div class="col-cover-main"><strong>${esc(c?.name || "Colega")}${isExternal(c) ? ` <span class="col-chip">Externo</span>` : ""}${cv.replacement_requested_at ? ` <span class="col-chip warn">⚠ Pidió reemplazo</span>` : ""}${isSession(cv) ? ` <span class="col-chip">📷 Sesión ${esc(deps.dateText(coverageDate(cv)))}</span>` : ""}</strong><span>${esc(cv.role || c?.role || "")}${cv.role || c?.role ? " · " : ""}${esc(time)}${cv.location ? ` · ${esc(cv.location)}` : ""}</span>${cv.notes ? `<small>${esc(cv.notes)}</small>` : ""}${materialHtml(cv) ? `<div class="col-material">${materialHtml(cv)}</div>` : ""}</div>
     <div class="col-cover-side">
       <strong>${money(cv.amount)}</strong>
+      ${editFeeBtn(cv)}
       ${paid ? `<span class="col-chip ok">Pagado ${esc(deps.dateText(paid.paid_on))}</span>` : `<span class="col-chip">Pendiente</span>`}
       ${driveChip(cv, client, c)}
       <button class="icon-btn col-mini" title="Mandar día, hora y lugar por WhatsApp" data-col="wa-coverage" data-id="${cv.id}">💬</button>
@@ -829,7 +830,7 @@ async function refreshPendingFees(before, after) {
   if (!before || !after) return;
   const changes = data.coverages.filter((cv) => cv.colleague_id === after.id && !cv.payment_id && !isDebt(cv) && cv.client_id).map((cv) => {
     const date = isSession(cv) ? coverageDate(cv) : "";
-    return { cv, old: feeFor(before, cv.client_id, cv.kind || "event", date), now: feeFor(after, cv.client_id, cv.kind || "event", date) };
+    return { cv, old: feeFor(before, cv.client_id, cv.kind || "event", date, cv.with_edit), now: feeFor(after, cv.client_id, cv.kind || "event", date, cv.with_edit) };
   }).filter((x) => x.now !== x.old && num(x.cv.amount) === num(x.old));
   if (!changes.length) return;
   if (!confirm(`¿Actualizar el monto de ${changes.length} ${changes.length === 1 ? "trabajo" : "trabajos"} sin pagar de ${after.name} con la tarifa nueva?\n\n${changes.slice(0, 8).map((x) => `• ${clientById(x.cv.client_id)?.honoree || "Evento"}: ${money(x.old)} → ${money(x.now)}`).join("\n")}`)) return;
@@ -886,13 +887,35 @@ function pctHelp(pct) {
   return `Se calcula sobre lo que cobrás por la cobertura de cada evento (hoy ${money(base)})${pct ? `: ${pct}% = ${money(Math.round(base * pct / 100))} por evento` : ""}. Si le asignás la tarea «Editar fotos/video del evento», cobra además su % de la edición (hoy ${money(edit)}${pct ? ` → ${money(Math.round(edit * pct / 100))}` : ""}). Al asignarle un evento se usa la tarifa vigente a la fecha de ese evento.`;
 }
 // Monto a pagarle a esa persona por ese trabajo.
-function feeFor(colleague, clientId, kind = "event", date = "") {
+function feeFor(colleague, clientId, kind = "event", date = "", withEdit = false) {
   if (!colleague) return 0;
-  if (!isPercent(colleague)) return num(colleague.default_fee);
+  if (!isPercent(colleague)) return withEdit && hasEditFee(colleague) ? num(colleague.edit_fee) : num(colleague.default_fee);
   const edit = kind === "event" ? editBase(clientId, colleague, date) : 0;
   return Math.round((coverageBase(clientId, kind, colleague, date) + edit) * Number(colleague.pay_percent) / 100);
 }
-function payLabel(c) { return isPercent(c) ? `${Number(c.pay_percent)}% de la cobertura${editsEvents(c) ? " + edición" : ""}` : money(c.default_fee); }
+// Tarifa fija con edición (ej. $120.000 sin editar / $140.000 editado).
+function hasEditFee(c) { return !isPercent(c) && Number(c?.edit_fee) > 0; }
+// Botón «✂ Con edición» de cada trabajo: cambia el monto entre las dos tarifas.
+function editFeeBtn(cv) {
+  const c = colleagueById(cv?.colleague_id);
+  if (!cv || isDebt(cv) || !hasEditFee(c)) return "";
+  const on = Boolean(cv.with_edit);
+  if (cv.payment_id) return on ? `<span class="col-chip ok" title="Pagado con tarifa de edición">✂ Con edición</span>` : "";
+  return `<button class="col-chip ${on ? "ok" : ""}" data-col="toggle-cov-edit" data-id="${cv.id}" aria-pressed="${on}" title="${on ? `Con edición: ${money(c.edit_fee)}. Tocá para pasar a sin edición (${money(c.default_fee)}).` : `Sin edición: ${money(c.default_fee)}. Tocá si este evento lo edita (${money(c.edit_fee)}).`}">✂ ${on ? "Con edición" : "Sin edición"}</button>`;
+}
+async function toggleCoverageEdit(id) {
+  const cv = data.coverages.find((x) => x.id === id); if (!cv) return;
+  if (cv.payment_id) { toast("Este trabajo ya está pagado: deshacé el pago para cambiarlo."); return; }
+  const c = colleagueById(cv.colleague_id);
+  if (!hasEditFee(c)) { toast("Cargale la «Tarifa con edición» en su ficha (✎ Editar)."); return; }
+  const withEdit = !cv.with_edit;
+  const amount = feeFor(c, cv.client_id, cv.kind || "event", isSession(cv) ? coverageDate(cv) : "", withEdit);
+  const [saved] = await run(supabase.from("colleague_coverages").update({ with_edit: withEdit, amount }).eq("id", id).select());
+  data.coverages = data.coverages.map((x) => (x.id === id ? saved : x));
+  toast(withEdit ? `Con edición: ${money(amount)}` : `Sin edición: ${money(amount)}`);
+  refreshAll(cv.client_id);
+}
+function payLabel(c) { return isPercent(c) ? `${Number(c.pay_percent)}% de la cobertura${editsEvents(c) ? " + edición" : ""}` : `${money(c.default_fee)}${hasEditFee(c) ? ` · editado ${money(c.edit_fee)}` : ""}`; }
 
 function salonOptions(selected = []) {
   const set = new Set([...(selected || []), ...deps.getClients().map((c) => c.salon).filter(Boolean)]);
@@ -916,6 +939,7 @@ function openColleagueForm(colleague) {
       </select></label>
       <label class="${isPercent(c) ? "" : "hidden"}" data-col-pct>Porcentaje (%)<input name="pay_percent" type="number" min="1" max="100" step="0.5" inputmode="decimal" value="${Number(c.pay_percent) || ""}" placeholder="Ej. 30"></label>
       <label class="${isPercent(c) ? "hidden" : ""}" data-col-fixed>Tarifa por evento<input name="default_fee" type="number" min="0" step="1" inputmode="numeric" value="${Number(c.default_fee) || ""}" placeholder="Ej. 60000"></label>
+      <label class="${isPercent(c) ? "hidden" : ""}" data-col-fixed>Tarifa con edición <small>(opcional)</small><input name="edit_fee" type="number" min="0" step="1" inputmode="numeric" value="${Number(c.edit_fee) || ""}" placeholder="Ej. 140000"></label>
       ${c.id ? `<label class="col-check"><input type="checkbox" name="active" ${c.active ? "checked" : ""}> Activo (si lo desactivás, deja de funcionar su calendario)</label>` : ""}
     </div>
     <fieldset class="col-salons"><legend>Salones asignados <small>(ve todos los eventos y tareas de estos salones en su portal)</small></legend>
@@ -945,6 +969,7 @@ async function saveColleagueForm(form) {
     default_fee: num(f.get("default_fee")),
     pay_mode: f.get("pay_mode") === "percent" ? "percent" : "fixed",
     pay_percent: f.get("pay_mode") === "percent" ? num(f.get("pay_percent")) || null : null,
+    edit_fee: f.get("pay_mode") === "percent" ? null : num(f.get("edit_fee")) || null,
     notes: String(f.get("notes") || "").trim() || null,
     salons: f.getAll("salons").map(String),
     team: String(f.get("team") || "Pablo"),
@@ -1297,7 +1322,7 @@ function openColleagueDetail(id) {
     if (isDebt(cv)) return `<tr><td>${esc(deps.dateText(coverageDate(cv)))}</td><td>💰 ${esc(debtLabel(cv))}</td><td></td><td></td><td></td><td class="num">${money(cv.amount)}</td><td>${cv.payment_id ? `<span class="col-chip ok">Pagado</span>` : `<span class="col-chip warn">Por pagar</span> <button class="icon-btn col-mini" title="Borrar esta deuda" aria-label="Borrar deuda anterior" data-col="del-debt" data-id="${cv.id}">×</button>`}</td></tr>`;
     const cl = clientById(cv.client_id);
     const st = cv.payment_id ? `<span class="col-chip ok">Pagado</span>` : isDue(cv) ? `<span class="col-chip warn">Por pagar</span>` : `<span class="col-chip">Próximo</span>`;
-    return `<tr><td>${cl ? esc(deps.dateText(coverageDate(cv))) : "—"}</td><td><button class="col-link" data-col="open-event" data-id="${cv.client_id}">${cl ? `${isSession(cv) ? "📷 Sesión · " : ""}${esc(cl.honoree)} <small>#${esc(cl.code)} · ${esc(cl.salon)}</small>` : "Evento borrado"}</button></td><td>${esc(cv.role || "")}</td><td>${cv.arrival_time ? `${hhmm(cv.arrival_time)} h` : ""}</td><td><div class="col-material">${materialHtml(cv)}</div></td><td class="num">${money(cv.amount)}</td><td>${st}</td></tr>`;
+    return `<tr><td>${cl ? esc(deps.dateText(coverageDate(cv))) : "—"}</td><td><button class="col-link" data-col="open-event" data-id="${cv.client_id}">${cl ? `${isSession(cv) ? "📷 Sesión · " : ""}${esc(cl.honoree)} <small>#${esc(cl.code)} · ${esc(cl.salon)}</small>` : "Evento borrado"}</button></td><td>${esc(cv.role || "")}</td><td>${cv.arrival_time ? `${hhmm(cv.arrival_time)} h` : ""}</td><td><div class="col-material">${materialHtml(cv)}</div></td><td class="num">${money(cv.amount)}</td><td><div class="col-material">${st}${editFeeBtn(cv)}</div></td></tr>`;
   };
   showDialog("colDetailDialog", `<div class="col-detail">
     ${head(`${c.role || "Colega"}${c.active ? "" : " · Inactivo"}`, c.name, "colDetailDialog")}
@@ -1709,6 +1734,7 @@ const ACTIONS = {
   "add-debt": (id) => openDebtForm(id),
   split: () => openSplitForm(),
   "toggle-edit": (id) => toggleEdit(id),
+  "toggle-cov-edit": (id) => toggleCoverageEdit(id),
   "del-debt": (id) => deleteDebt(id),
   "del-discount": (id) => deleteDiscount(id),
   "edit-discount": (id) => { const d = data.discounts.find((x) => x.id === id); if (d) openDiscountForm(d.colleague_id, d); },
@@ -1761,7 +1787,7 @@ export function initColleagues(dependencies) {
       const f = e.target.form, pct = e.target.value === "percent";
       f.querySelector("[data-col-pct]").classList.toggle("hidden", !pct);
       f.querySelector("[data-col-pct-help]").classList.toggle("hidden", !pct);
-      f.querySelector("[data-col-fixed]").classList.toggle("hidden", pct);
+      f.querySelectorAll("[data-col-fixed]").forEach((el) => el.classList.toggle("hidden", pct));
     }
     if (e.target.matches("[data-col-toggle-inactive]")) { showInactive = e.target.checked; renderColleagues(); }
     if (e.target.matches("[data-col-assign]")) assignFromSelector(e.target);
