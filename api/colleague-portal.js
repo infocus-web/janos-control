@@ -10,6 +10,10 @@ import { createClient } from "@supabase/supabase-js";
 //  - mark    { taskId, done }      → marca/desmarca una tarea como hecha
 //  - note    { clientId, body }    → agrega una nota al evento
 //  - unnote  { noteId }            → borra una nota suya
+//  - material { coverageId, uploaded, edited, photoCount, link }
+//                                   → "Subí el material" / "Está editado",
+//                                     cuántas fotos y link de descarga (el
+//                                     día y la hora los pone el servidor)
 //  - seen                          → marca sus avisos como leídos
 //  - block   { day, reason }       → "No puedo este día": si tenía trabajos
 //                                     ese día, quedan con pedido de reemplazo
@@ -39,6 +43,17 @@ function sinceIso() { return new Date(Date.now() - 3 * 3600000 - PAST_DAYS * 864
 function publicSession(s) { return s ? { access_token: s.access_token, refresh_token: s.refresh_token, expires_at: s.expires_at } : null; }
 function hhmm(t) { return t ? String(t).slice(0, 5) : ""; }
 function todayAr() { return new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10); }
+
+// Lo que cargó la colega sobre el material de esa cobertura.
+function materialOf(cv) {
+  return { uploadedAt: cv.material_uploaded_at || null, editedAt: cv.material_edited_at || null, photoCount: cv.material_photo_count ?? null, link: cv.material_link || "" };
+}
+// Solo links https válidos (nada de javascript: ni texto suelto).
+function cleanLink(v) {
+  const s = String(v || "").trim().slice(0, 2000);
+  if (!s) return "";
+  try { const u = new URL(s); return u.protocol === "https:" ? u.toString() : null; } catch { return null; }
+}
 
 async function colleagueForUser(admin, userId) {
   const { data, error } = await admin.from("colleagues").select("id,owner_id,name,role,salons,task_keys,active").eq("user_id", userId).maybeSingle();
@@ -109,7 +124,7 @@ async function loadData(admin, colleague) {
   const since = sinceIso();
   const { data: covRows, error: covError } = await admin
     .from("colleague_coverages")
-    .select("id,client_id,kind,work_date,role,arrival_time,end_time,location,notes,drive_shared_at,clients!inner(event_date)")
+    .select("id,client_id,kind,work_date,role,arrival_time,end_time,location,notes,drive_shared_at,material_uploaded_at,material_edited_at,material_photo_count,material_link,clients!inner(event_date)")
     .eq("colleague_id", colleague.id)
     .gte("clients.event_date", since);
   if (covError) throw covError;
@@ -154,7 +169,7 @@ async function loadData(admin, colleague) {
         // La carpeta solo sirve si ya se la compartieron (si no, no tiene permiso).
         drive_url: mine.some((cv) => cv.drive_shared_at) ? c.drive_url : null,
         // Evento y/o sesión de fotos que cubre ella (la sesión tiene su fecha).
-        coverages: mine.map((cv) => ({ kind: cv.kind || "event", date: cv.work_date || c.event_date, role: cv.role, arrival: hhmm(cv.arrival_time), end: hhmm(cv.end_time), location: cv.location, notes: cv.notes })),
+        coverages: mine.map((cv) => ({ id: cv.id, kind: cv.kind || "event", date: cv.work_date || c.event_date, role: cv.role, arrival: hhmm(cv.arrival_time), end: hhmm(cv.end_time), location: cv.location, notes: cv.notes, material: materialOf(cv) })),
       };
     }),
     tasks,
@@ -263,6 +278,37 @@ export default async function handler(req, res) {
       const flagged = sameDay.filter((cv) => cv.replacement_requested_at).map((cv) => cv.id);
       if (flagged.length) await admin.from("colleague_coverages").update({ replacement_requested_at: null, replacement_reason: null }).in("id", flagged);
       return send(res, 200, { ok: true });
+    }
+
+    if (action === "material") {
+      const { data: cv, error: cErr } = await admin.from("colleague_coverages")
+        .select("id,kind,role,client_id,material_uploaded_at,material_edited_at")
+        .eq("id", String(body.coverageId || "")).eq("colleague_id", colleague.id).maybeSingle();
+      if (cErr) throw cErr;
+      if (!cv || cv.kind === "debt" || !cv.client_id) return send(res, 404, { error: "Trabajo no encontrado." });
+      const uploaded = Boolean(body.uploaded), edited = Boolean(body.edited);
+      const link = cleanLink(body.link);
+      if (link === null) return send(res, 400, { error: "El link tiene que empezar con https:// (copialo de Drive, WeTransfer, etc.)." });
+      let count = null;
+      if (body.photoCount !== "" && body.photoCount != null) {
+        count = Number(body.photoCount);
+        if (!Number.isInteger(count) || count < 0 || count > 100000) return send(res, 400, { error: "La cantidad de fotos tiene que ser un número entero." });
+      }
+      if ((uploaded || edited) && !link) return send(res, 400, { error: "Pegá el link para descargar el material." });
+      const isVideo = /vide/i.test(cv.role || colleague.role || "");
+      if (uploaded && !isVideo && count == null) return send(res, 400, { error: "Poné cuántas fotos son." });
+      const now = new Date().toISOString();
+      // El día y la hora quedan los de la primera vez que lo marcó.
+      const row = {
+        material_uploaded_at: uploaded ? (cv.material_uploaded_at || now) : null,
+        material_edited_at: edited ? (cv.material_edited_at || now) : null,
+        material_photo_count: count,
+        material_link: link || null,
+      };
+      const { data: saved, error } = await admin.from("colleague_coverages").update(row).eq("id", cv.id).eq("colleague_id", colleague.id)
+        .select("material_uploaded_at,material_edited_at,material_photo_count,material_link").single();
+      if (error) throw error;
+      return send(res, 200, { ok: true, material: materialOf(saved) });
     }
 
     if (action === "unnote") {

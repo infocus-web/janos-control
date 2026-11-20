@@ -732,6 +732,9 @@ legend { padding: 0 6px; }
 .col-chip.warn { color: var(--amber); background: var(--amber-soft); border-color: rgba(251,191,36,.25); }
 .col-chip.action { color: var(--blue); background: var(--blue-soft); border-color: rgba(96,165,250,.3); }
 button.col-chip { cursor: pointer; font-family: inherit; }
+a.col-chip { text-decoration: none; }
+a.col-chip:hover { filter: brightness(1.15); }
+.col-material { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 button.col-chip:hover { filter: brightness(1.15); }
 .col-mini { font-size: 15px; padding: 4px 6px; }
 .col-warn { border-radius: 10px; padding: 10px 12px; background: var(--amber-soft); border: 1px solid rgba(251,191,36,.25); color: var(--amber); font-size: 12.5px; line-height: 1.45; }
@@ -903,3 +906,7 @@ button.col-chip:hover { filter: brightness(1.15); }
 
 /* Colegas: botón «✂ Edita: Sí/No» del detalle */
 .col-edit-toggle.on { color: var(--green); background: var(--green-soft); border-color: rgba(52,211,153,.35); }
+.col-material .col-chip { font-size: 11px; color: var(--ink-2); }
+.col-material .col-chip.ok { color: var(--green); }
+.col-material .col-chip.warn { color: var(--amber); }
+.col-material .col-chip.action { color: var(--blue); }

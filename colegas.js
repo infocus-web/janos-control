@@ -97,6 +97,19 @@ function debtLabel(cv) { return `Deuda anterior${cv.notes ? ` · ${cv.notes}` : 
 function kindTag(cv) { return isSession(cv) ? "Sesión de fotos" : "Evento"; }
 // Sesión de fotos cargada en la ficha del cliente (app.js → client.photoSession).
 function photoSessionOf(client) { const ps = client?.photoSession; return ps && ps.date ? ps : null; }
+// Material que cargó la persona desde su portal: subido, editado, cuántas
+// fotos y link de descarga (con día y hora de cada marca).
+function materialHtml(cv) {
+  if (!cv || isDebt(cv)) return "";
+  const when = (iso) => new Intl.DateTimeFormat("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(iso));
+  const chips = [];
+  if (cv.material_uploaded_at) chips.push(`<span class="col-chip ok" title="Marcó «Subí el material»">📤 Subido ${esc(when(cv.material_uploaded_at))} h</span>`);
+  if (cv.material_edited_at) chips.push(`<span class="col-chip ok" title="Marcó «Está editado»">✂ Editado ${esc(when(cv.material_edited_at))} h</span>`);
+  if (cv.material_photo_count != null) chips.push(`<span class="col-chip">🖼 ${Number(cv.material_photo_count).toLocaleString("es-AR")} fotos</span>`);
+  if (/^https:\/\//i.test(cv.material_link || "")) chips.push(`<a class="col-chip action" href="${esc(cv.material_link)}" target="_blank" rel="noopener noreferrer" title="${esc(cv.material_link)}">⬇ Descargar</a>`);
+  if (!chips.length) return isDue(cv) ? `<span class="col-chip warn" title="Todavía no marcó el material en su portal">📦 Sin material</span>` : "";
+  return chips.join(" ");
+}
 function isDue(cv) { const d = coverageDate(cv); return Boolean(d) && d <= today(); }
 function byDate(a, b) { return coverageDate(a).localeCompare(coverageDate(b)); }
 function validEmail(v) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || "").trim()); }
@@ -751,7 +764,7 @@ function coverRowHtml(cv, client) {
   const paid = data.payments.find((p) => p.id === cv.payment_id);
   const time = cv.arrival_time ? `${hhmm(cv.arrival_time)}${cv.end_time ? `–${hhmm(cv.end_time)}` : ""} h` : "Sin horario";
   return `<div class="col-cover-row">
-    <div class="col-cover-main"><strong>${esc(c?.name || "Colega")}${isExternal(c) ? ` <span class="col-chip">Externo</span>` : ""}${cv.replacement_requested_at ? ` <span class="col-chip warn">⚠ Pidió reemplazo</span>` : ""}${isSession(cv) ? ` <span class="col-chip">📷 Sesión ${esc(deps.dateText(coverageDate(cv)))}</span>` : ""}</strong><span>${esc(cv.role || c?.role || "")}${cv.role || c?.role ? " · " : ""}${esc(time)}${cv.location ? ` · ${esc(cv.location)}` : ""}</span>${cv.notes ? `<small>${esc(cv.notes)}</small>` : ""}</div>
+    <div class="col-cover-main"><strong>${esc(c?.name || "Colega")}${isExternal(c) ? ` <span class="col-chip">Externo</span>` : ""}${cv.replacement_requested_at ? ` <span class="col-chip warn">⚠ Pidió reemplazo</span>` : ""}${isSession(cv) ? ` <span class="col-chip">📷 Sesión ${esc(deps.dateText(coverageDate(cv)))}</span>` : ""}</strong><span>${esc(cv.role || c?.role || "")}${cv.role || c?.role ? " · " : ""}${esc(time)}${cv.location ? ` · ${esc(cv.location)}` : ""}</span>${cv.notes ? `<small>${esc(cv.notes)}</small>` : ""}${materialHtml(cv) ? `<div class="col-material">${materialHtml(cv)}</div>` : ""}</div>
     <div class="col-cover-side">
       <strong>${money(cv.amount)}</strong>
       ${paid ? `<span class="col-chip ok">Pagado ${esc(deps.dateText(paid.paid_on))}</span>` : `<span class="col-chip">Pendiente</span>`}
@@ -1281,10 +1294,10 @@ function openColleagueDetail(id) {
   const discounts = data.discounts.filter((d) => d.colleague_id === id);
   const payments = data.payments.filter((p) => p.colleague_id === id).sort((a, b) => String(b.paid_on).localeCompare(String(a.paid_on)) || String(b.created_at).localeCompare(String(a.created_at)));
   const coverRow = (cv) => {
-    if (isDebt(cv)) return `<tr><td>${esc(deps.dateText(coverageDate(cv)))}</td><td>💰 ${esc(debtLabel(cv))}</td><td></td><td></td><td class="num">${money(cv.amount)}</td><td>${cv.payment_id ? `<span class="col-chip ok">Pagado</span>` : `<span class="col-chip warn">Por pagar</span> <button class="icon-btn col-mini" title="Borrar esta deuda" aria-label="Borrar deuda anterior" data-col="del-debt" data-id="${cv.id}">×</button>`}</td></tr>`;
+    if (isDebt(cv)) return `<tr><td>${esc(deps.dateText(coverageDate(cv)))}</td><td>💰 ${esc(debtLabel(cv))}</td><td></td><td></td><td></td><td class="num">${money(cv.amount)}</td><td>${cv.payment_id ? `<span class="col-chip ok">Pagado</span>` : `<span class="col-chip warn">Por pagar</span> <button class="icon-btn col-mini" title="Borrar esta deuda" aria-label="Borrar deuda anterior" data-col="del-debt" data-id="${cv.id}">×</button>`}</td></tr>`;
     const cl = clientById(cv.client_id);
     const st = cv.payment_id ? `<span class="col-chip ok">Pagado</span>` : isDue(cv) ? `<span class="col-chip warn">Por pagar</span>` : `<span class="col-chip">Próximo</span>`;
-    return `<tr><td>${cl ? esc(deps.dateText(coverageDate(cv))) : "—"}</td><td><button class="col-link" data-col="open-event" data-id="${cv.client_id}">${cl ? `${isSession(cv) ? "📷 Sesión · " : ""}${esc(cl.honoree)} <small>#${esc(cl.code)} · ${esc(cl.salon)}</small>` : "Evento borrado"}</button></td><td>${esc(cv.role || "")}</td><td>${cv.arrival_time ? `${hhmm(cv.arrival_time)} h` : ""}</td><td class="num">${money(cv.amount)}</td><td>${st}</td></tr>`;
+    return `<tr><td>${cl ? esc(deps.dateText(coverageDate(cv))) : "—"}</td><td><button class="col-link" data-col="open-event" data-id="${cv.client_id}">${cl ? `${isSession(cv) ? "📷 Sesión · " : ""}${esc(cl.honoree)} <small>#${esc(cl.code)} · ${esc(cl.salon)}</small>` : "Evento borrado"}</button></td><td>${esc(cv.role || "")}</td><td>${cv.arrival_time ? `${hhmm(cv.arrival_time)} h` : ""}</td><td><div class="col-material">${materialHtml(cv)}</div></td><td class="num">${money(cv.amount)}</td><td>${st}</td></tr>`;
   };
   showDialog("colDetailDialog", `<div class="col-detail">
     ${head(`${c.role || "Colega"}${c.active ? "" : " · Inactivo"}`, c.name, "colDetailDialog")}
@@ -1301,7 +1314,7 @@ function openColleagueDetail(id) {
       </div>
     </div>
     <h3 class="col-section">Coberturas <small>${covers.length}</small></h3>
-    ${covers.length ? `<div class="col-table-wrap"><table class="col-table"><thead><tr><th>Fecha</th><th>Evento</th><th>Función</th><th>Llega</th><th class="num">Monto</th><th></th></tr></thead><tbody>${covers.map(coverRow).join("")}</tbody></table></div>` : `<p class="col-empty">Todavía no tiene eventos asignados. Se asignan desde la ficha de cada evento.</p>`}
+    ${covers.length ? `<div class="col-table-wrap"><table class="col-table"><thead><tr><th>Fecha</th><th>Evento</th><th>Función</th><th>Llega</th><th>Material</th><th class="num">Monto</th><th></th></tr></thead><tbody>${covers.map(coverRow).join("")}</tbody></table></div>` : `<p class="col-empty">Todavía no tiene eventos asignados. Se asignan desde la ficha de cada evento.</p>`}
     <h3 class="col-section">Descuentos <small>${discounts.length}</small></h3>
     ${discounts.length ? `<div class="col-table-wrap"><table class="col-table"><thead><tr><th>Concepto</th><th class="num">Total</th><th>Cuotas</th><th class="num">Descontado</th><th class="num">Resta</th><th></th></tr></thead><tbody>${discounts.map((d) => { const rem = discountRemaining(d); const applied = data.applications.filter((a) => a.discount_id === d.id).length; return `<tr><td>${esc(d.description)}<small class="col-sub">${esc(deps.dateText(d.created_on))}</small></td><td class="num">${money(d.total_amount)}</td><td>${applied}/${d.installments}${rem > 0 && d.installments > 1 ? `<small class="col-sub">cuota ${money(suggestedInstallment(d))}</small>` : ""}</td><td class="num">${money(discountApplied(d))}</td><td class="num">${rem > 0 ? money(rem) : `<span class="col-chip ok">Saldado</span>`}</td><td class="col-row-actions">${rem > 0 ? `<button class="icon-btn col-mini" title="Editar cuotas, total o concepto" aria-label="Editar descuento" data-col="edit-discount" data-id="${d.id}">✎</button>` : ""}${applied ? "" : `<button class="icon-btn col-mini" title="Borrar descuento" data-col="del-discount" data-id="${d.id}">×</button>`}</td></tr>`; }).join("")}</tbody></table></div>` : `<p class="col-empty">Sin descuentos. Usalos si, por ejemplo, le vendiste equipo y se lo descontás de sus trabajos.</p>`}
     <h3 class="col-section">Pagos <small>${payments.length}</small></h3>

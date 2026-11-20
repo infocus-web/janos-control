@@ -127,6 +127,16 @@
   .cal-item.s { border-left-color:#60a5fa; }
   .cal-item span { color:var(--muted); font-size:13px; }
   .cal-item em { color:var(--gold-2); font-style:normal; font-size:13px; }
+  .material { background:var(--panel-2); border:1px solid var(--line); border-radius:12px; padding:12px; display:grid; gap:10px; }
+  .material h3 { margin:0; }
+  .material .check { display:flex; align-items:center; gap:10px; font-size:15px; color:var(--ink); cursor:pointer; min-height:40px; }
+  .material .check input { width:22px; height:22px; margin:0; flex:none; accent-color:var(--gold); }
+  .material .check small { display:block; color:var(--ok); font-size:12px; }
+  .material .mat-grid { display:grid; grid-template-columns:minmax(120px,160px) 1fr; gap:10px; }
+  .material .row { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; align-items:center; }
+  .material .row a { margin-right:auto; text-decoration:none; }
+  .material-later { margin:0; font-size:13px; color:var(--muted); }
+  @media (max-width:420px) { .material .mat-grid { grid-template-columns:1fr; } }
   .empty { text-align:center; padding:40px 16px; color:var(--muted); background:var(--panel); border:1px dashed var(--line); border-radius:14px; }
   .toast { position:fixed; left:50%; bottom:20px; transform:translateX(-50%); background:#2a1f3d; border:1px solid var(--gold-border); padding:12px 16px; border-radius:12px; font-size:14px; z-index:10; max-width:90vw; }
   .toast[hidden] { display:none; }
@@ -350,6 +360,26 @@
       ${cv.location ? `<span>📍 <a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(cv.location)}" target="_blank" rel="noopener">${esc(cv.location)}</a></span>` : ""}${cv.notes ? `<span>📝 ${esc(cv.notes)}</span>` : ""}</div>`;
   }
 
+  // Material de su trabajo: subido, editado, cuántas fotos y link de descarga.
+  // El día y la hora de cada marca los guarda el servidor.
+  function materialHtml(cv) {
+    if (!cv.id) return "";
+    if (cv.date > todayIso()) return `<p class="material-later">📦 Después del ${cv.kind === "session" ? "trabajo" : "evento"} vas a poder marcar acá que subiste el material.</p>`;
+    const m = cv.material || {};
+    const when = (iso) => new Intl.DateTimeFormat("es-AR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(iso));
+    const video = /vide/i.test(cv.role || state.me.role || "");
+    return `<form class="material" data-material="${esc(cv.id)}">
+      <h3>📦 Material${cv.kind === "session" ? " de la sesión" : ""}</h3>
+      <label class="check"><input type="checkbox" name="uploaded" ${m.uploadedAt ? "checked" : ""}><span>Subí el material${m.uploadedAt ? `<small>✔ ${esc(when(m.uploadedAt))} h</small>` : ""}</span></label>
+      <label class="check"><input type="checkbox" name="edited" ${m.editedAt ? "checked" : ""}><span>Está editado${m.editedAt ? `<small>✔ ${esc(when(m.editedAt))} h</small>` : ""}</span></label>
+      <div class="mat-grid">
+        <label>${video ? "Cantidad de fotos (si hay)" : "Cantidad de fotos"}<input type="number" name="photoCount" min="0" max="100000" step="1" inputmode="numeric" value="${m.photoCount ?? ""}"></label>
+        <label>Link para descargar<input type="url" name="link" maxlength="2000" placeholder="https://…" value="${esc(m.link || "")}"></label>
+      </div>
+      <div class="row">${m.link ? `<a class="btn" href="${esc(m.link)}" target="_blank" rel="noopener">⬇ Abrir link</a>` : ""}<button class="btn btn-primary" type="submit">Guardar material</button></div>
+    </form>`;
+  }
+
   function eventHtml(it) {
     const c = it.c;
     const tasks = state.tasks.filter((t) => t.client_id === c.id).sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
@@ -378,7 +408,7 @@
         ${badge ? `<span class="badge">${esc(badge)}</span>` : pendingCount ? `<span class="badge soft">${pendingCount} pendientes</span>` : ""}
       </summary>
       <div class="body">
-        ${it.covs.map((x) => covHtml(c, x)).join("")}
+        ${it.covs.map((x) => covHtml(c, x) + materialHtml(x)).join("")}
         <dl class="grid">
           ${c.event_time ? `<div><dt>Inicio del evento</dt><dd>${esc(c.event_time)} h</dd></div>` : ""}
           ${c.client_name ? `<div><dt>Cliente</dt><dd>${esc(c.client_name)}</dd></div>` : ""}
@@ -483,6 +513,17 @@
         blockForm = ""; lastBlock = { day, reason, affected: out.affected || [] };
         renderApp(); toast(lastBlock.affected.length ? "Listo: se pidió reemplazo" : "Día bloqueado");
       } catch (err) { btn.disabled = false; if (err.message !== "session") toast(err.message); }
+      return;
+    }
+    if (form.dataset.material) {
+      const f = new FormData(form), id = form.dataset.material;
+      const payload = { coverageId: id, uploaded: f.get("uploaded") === "on", edited: f.get("edited") === "on", photoCount: String(f.get("photoCount") || "").trim(), link: String(f.get("link") || "").trim() };
+      btn.disabled = true; btn.textContent = "Guardando…";
+      try {
+        const out = await call("material", payload);
+        state.clients.forEach((c) => c.coverages.forEach((cv) => { if (cv.id === id) cv.material = out.material; }));
+        renderApp(); toast(payload.uploaded || payload.edited ? "Material guardado. Pablo ya lo ve." : "Guardado");
+      } catch (err) { btn.disabled = false; btn.textContent = "Guardar material"; if (err.message !== "session") toast(err.message); }
       return;
     }
     if (form.dataset.note) {
